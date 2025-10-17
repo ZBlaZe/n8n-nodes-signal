@@ -86,6 +86,10 @@ export class SignalTrigger implements INodeType {
         const processedMessages = new Set<number>();
         const maxMessages = 1000;
 
+        let ws: WebSocket | null = null;
+        let reconnectTimeout: NodeJS.Timeout | null = null;
+        let isClosed = false; // Flag to prevent reconnection when trigger is closed
+
         // Function to mark a message as read
         const markMessageAsRead = async (sourceNumber: string, sourceUuid: string, timestamp: number) => {
             try {
@@ -96,7 +100,7 @@ export class SignalTrigger implements INodeType {
                     timestamp: timestamp
                 };
 
-                this.logger.debug(`SignalTrigger: Sending read receipt - URL: ${readReceiptUrl}, Body: ${JSON.stringify(requestBody)}`);
+                this.logger.debug(`SignalTrigger: Sending read read receipt - URL: ${readReceiptUrl}, Body: ${JSON.stringify(requestBody)}`);
 
                 const response = await fetch(readReceiptUrl, {
                     method: 'POST',
@@ -119,7 +123,12 @@ export class SignalTrigger implements INodeType {
         };
 
         const connectWebSocket = () => {
-            const ws = new WebSocket(wsUrl, {
+            if (isClosed) {
+                this.logger.debug(`SignalTrigger: Trigger is closed, skipping reconnection`);
+                return;
+            }
+
+            ws = new WebSocket(wsUrl, {
                 headers: apiToken ? { Authorization: `Bearer ${apiToken}` } : {},
             });
 
@@ -130,8 +139,6 @@ export class SignalTrigger implements INodeType {
             ws.on('message', async (data: Buffer) => {
                 try {
                     const message = JSON.parse(data.toString());
-                    this.logger.debug(`SignalTrigger: Received raw message: ${JSON.stringify(message, null, 2)}`);
-
                     const timestamp = message.envelope?.timestamp || 0;
                     if (processedMessages.has(timestamp)) {
                         this.logger.debug(`SignalTrigger: Skipping duplicate message with timestamp ${timestamp}`);
@@ -235,34 +242,34 @@ export class SignalTrigger implements INodeType {
 
             ws.on('error', (error: Error) => {
                 this.logger.error('SignalTrigger: WebSocket error', { error });
-                setTimeout(connectWebSocket, reconnectDelay);
+                if (!isClosed) {
+                    reconnectTimeout = setTimeout(connectWebSocket, reconnectDelay);
+                }
             });
 
             ws.on('close', (code, reason) => {
                 this.logger.debug(`SignalTrigger: WebSocket closed with code ${code}, reason: ${reason.toString()}`);
-                setTimeout(connectWebSocket, reconnectDelay);
+                if (!isClosed) {
+                    reconnectTimeout = setTimeout(connectWebSocket, reconnectDelay);
+                }
             });
-
-            return ws;
         };
 
-        const ws = connectWebSocket();
+        connectWebSocket();
 
-        return new Promise((resolve, reject) => {
-            ws.on('open', () => {
-                this.logger.debug(`SignalTrigger: Initial connection to ${wsUrl}`);
-                resolve({
-                    closeFunction: async () => {
-                        ws.close();
-                        this.logger.debug('SignalTrigger: WebSocket closed');
-                    },
-                });
-            });
-
-            ws.on('error', (error: Error) => {
-                this.logger.error('SignalTrigger: WebSocket connection failed', { error });
-                setTimeout(connectWebSocket, reconnectDelay);
-            });
-        });
+        return {
+            closeFunction: async () => {
+                isClosed = true;
+                if (reconnectTimeout) {
+                    clearTimeout(reconnectTimeout);
+                    reconnectTimeout = null;
+                }
+                if (ws) {
+                    ws.close();
+                    ws = null;
+                }
+                this.logger.debug('SignalTrigger: WebSocket closed and reconnection stopped');
+            },
+        };
     }
 }
