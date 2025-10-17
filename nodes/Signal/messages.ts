@@ -106,8 +106,8 @@ export async function executeMessagesOperation(
                 }
             }
 
-            // Use /v2/send if base64_attachments are present, otherwise /v1/send
-            const endpoint = body.base64_attachments ? `${apiUrl}/v2/send` : `${apiUrl}/v1/send`;
+            // Use /v2/send for all messages, as per user's working curl
+            const endpoint = `${apiUrl}/v2/send`;
             this.logger.debug(`Signal: Sending request to ${endpoint} with body: ${JSON.stringify(body, null, 2)}`);
             const response = await retryRequest(() =>
                 axios.post(endpoint, body, axiosConfig)
@@ -205,6 +205,24 @@ export async function executeMessagesOperation(
                 }, 
                 pairedItem: { item: itemIndex } 
             };
+        } else if (operation === 'markAsRead') {
+            if (!recipient || !targetSentTimestamp) {
+                throw new NodeApiError(this.getNode(), {
+                    message: 'Recipient and Target Message Timestamp are required for marking as read',
+                }, { itemIndex });
+            }
+            const response = await retryRequest(() =>
+                axios.post(
+                    `${apiUrl}/v1/receipts/${phoneNumber}`,
+                    {
+                        receipt_type: "read",
+                        recipient,
+                        timestamp: targetSentTimestamp
+                    },
+                    axiosConfig
+                )
+            );
+            return { json: response.data || { status: 'Message marked as read' }, pairedItem: { item: itemIndex } };
         }
         throw new NodeApiError(this.getNode(), { message: 'Unknown operation' });
     } catch (error) {
