@@ -40,10 +40,7 @@ export class SignalApi implements ICredentialType {
             method: 'GET',
             url: '={{$credentials.apiUrl}}/v1/about',
             headers: {
-                // The Authorization header uses n8n expression syntax for runtime interpolation
-                ...(typeof '{{ $credentials.apiToken }}' === 'string' && '{{ $credentials.apiToken }}'
-                    ? { Authorization: 'Bearer {{ $credentials.apiToken }}' }
-                    : {}),
+                Authorization: '={{$credentials.apiToken ? "Bearer " + $credentials.apiToken : ""}}',
             },
             timeout: 5000,
         }
