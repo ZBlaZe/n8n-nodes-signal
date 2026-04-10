@@ -1,6 +1,6 @@
 {
   "name": "n8n-nodes-signal-cli-rest-api",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "description": "Signal Node for n8n using signal-cli-rest-api",
   "repository": {
     "type": "git",
@@ -16,7 +16,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc && copyfiles nodes/Signal/signal.svg credentials/signal.svg dist",
+    "build": "tsc && copy nodes\\Signal\\signal.svg dist\\nodes\\Signal\\signal.svg && copy credentials\\signal.svg dist\\credentials\\signal.svg",
     "dev": "tsc --watch",
     "prepublishOnly": "npm run build"
   },
