@@ -59,27 +59,23 @@ export async function executeMessagesOperation(
 
             // Handle binary attachments if inputBinaryFields are specified and valid
             if (inputBinaryFields && inputBinaryFields.length > 0) {
-                const binary = this.getInputData()[itemIndex].binary;
-                if (!binary) {
-                    this.logger.debug(`Signal: No binary data for item ${itemIndex}, skipping attachments`);
-                } else {
-                    const base64Attachments: string[] = [];
-                    for (const inputBinaryField of inputBinaryFields) {
-                        if (!inputBinaryField || !binary[inputBinaryField]) {
-                            this.logger.debug(`Signal: No binary data for field '${inputBinaryField}' in item ${itemIndex}, skipping`);
-                            continue;
-                        }
+                const base64Attachments: string[] = [];
+                for (const inputBinaryField of inputBinaryFields) {
+                    if (!inputBinaryField) {
+                        continue;
+                    }
 
-                        const binaryData = binary[inputBinaryField];
-                        // Skip if binary data is empty
-                        if (!binaryData.data || binaryData.data.length === 0) {
+                    try {
+                        const binaryData = this.helpers.assertBinaryData(itemIndex, inputBinaryField);
+                        const binaryBuffer = await this.helpers.getBinaryDataBuffer(itemIndex, inputBinaryField);
+
+                        if (!binaryBuffer || binaryBuffer.length === 0) {
                             this.logger.debug(`Signal: Binary data in field '${inputBinaryField}' is empty for item ${itemIndex}, skipping`);
                             continue;
                         }
 
                         // Check file size (Signal limit: 100MB)
                         const maxFileSizeBytes = 99 * 1024 * 1024; // 99MB to be safe
-                        const binaryBuffer = Buffer.from(binaryData.data, 'base64');
                         if (binaryBuffer.length > maxFileSizeBytes) {
                             throw new NodeApiError(this.getNode(), {
                                 message: `File size exceeds Signal's 100MB limit (size: ${(binaryBuffer.length / (1024 * 1024)).toFixed(2)}MB). See https://support.signal.org/hc/en-us/articles/360007320391-What-kinds-of-files-can-I-send`,
@@ -96,13 +92,16 @@ export async function executeMessagesOperation(
                         base64Attachments.push(base64Attachment);
                         this.logger.debug(`Signal: Added base64 attachment for item ${itemIndex}, field '${inputBinaryField}': ${fileName}, MIME: ${mimeType}, Size: ${binaryBuffer.length} bytes`);
                         this.logger.debug(`Signal: Attachment format: ${base64Attachment.substring(0, 100)}...`);
+                    } catch (error) {
+                        this.logger.debug(`Signal: No binary data for field '${inputBinaryField}' in item ${itemIndex}, skipping`);
+                        continue;
                     }
+                }
 
-                    if (base64Attachments.length > 0) {
-                        body.base64_attachments = base64Attachments;
-                    } else {
-                        this.logger.debug(`Signal: No valid attachments for item ${itemIndex}, sending text only`);
-                    }
+                if (base64Attachments.length > 0) {
+                    body.base64_attachments = base64Attachments;
+                } else {
+                    this.logger.debug(`Signal: No valid attachments for item ${itemIndex}, sending text only`);
                 }
             }
 
