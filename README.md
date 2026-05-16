@@ -1,9 +1,9 @@
 # n8n Signal Node
 
 <div align="center">
-  <img src="https://n8n.io/guidelines/logo-white.svg" alt="n8n" width="160" height="160" />
+  <img src="https://logowik.com/content/uploads/images/n8nio4659.jpg" alt="n8n" width="173" height="130" />
 	<br>
-  <img src="https://signal.org/assets/images/header/logo.png" alt="Signal" width="160" height="160" />
+  <img src="https://signal.org/assets/images/header/logo.png" alt="Signal" width="320" height="160" />
 </div>
 
 <div align="center">
