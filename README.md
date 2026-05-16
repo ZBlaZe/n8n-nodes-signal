@@ -2,8 +2,7 @@
 
 <div align="center">
   <img src="https://logowik.com/content/uploads/images/n8nio4659.jpg" alt="n8n" width="173" height="130" />
-	<br>
-  <img src="https://signal.org/assets/images/header/logo.png" alt="Signal" width="320" height="160" />
+  <img src="https://www.schmidtisblog.de/wp-content/uploads/2023/03/Signal-Logo-neu.webp" alt="Signal" width="222" height="130" />
 </div>
 
 <div align="center">
