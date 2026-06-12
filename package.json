@@ -1,6 +1,6 @@
 {
   "name": "n8n-nodes-signal-cli-rest-api",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "Signal Node for n8n using signal-cli-rest-api",
   "repository": {
     "type": "git",

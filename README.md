@@ -18,7 +18,6 @@
 - [Prerequisites](#-prerequisites)
 - [Installation](#-installation)
 - [Configuration](#-configuration)
-- [Usage](#-usage)
 - [Operations](#-operations)
 - [Contributing](#-contributing)
 - [Support the Developer](#-support-the-developer)
@@ -28,11 +27,17 @@
 
 - **Send Messages**: Send text messages to individuals or groups
 - **Send Media**: Send images, files, and attachments
-- **Group Management**: Manage Signal groups
-- **Message Reception**: Trigger workflows based on incoming messages
+- **Reactions**: React to messages or remove reactions
+- **Typing Indicators**: Show/hide typing status
+- **Read Receipts**: Mark messages as read
+- **Polls**: Create, close, and vote on Signal polls
+- **Search**: Check if phone numbers are registered with Signal
+- **Group Management**: Create, update, and list Signal groups
+- **Contact Management**: List contacts for the account
+- **Attachment Handling**: List, download, and remove attachments
+- **Message Reception**: Trigger workflows on incoming messages via WebSocket
 - **Secure Communication**: Leverages Signal's end-to-end encryption
 - **REST API Integration**: Uses signal-cli-rest-api for reliable communication
-- **JSON-RPC Support**: Optimized for performance with JSON-RPC mode
 
 ## 🛠 Prerequisites
 
@@ -46,18 +51,16 @@ Create a `docker-compose.yml` file with the following configuration:
 version: '3'
 services:
   signal-cli-rest-api:
-    image: bbernhard/signal-cli-rest-api:latest  # Or specific version, e.g., v0.10.5
+    image: bbernhard/signal-cli-rest-api:latest
     container_name: signal-cli-rest-api
-    restart: unless-stopped  # Auto-restart except manual stop
+    restart: unless-stopped
     ports:
-      - "8085:8080"  # Change 8085 to available port if needed (e.g., 8003:8080)
+      - "8085:8080"
     volumes:
-      - /mnt/your-pool/signal-data:/home/.local/share/signal-cli  # Replace /mnt/your-pool with your path to signal data
-      # Additionally, for config: - /mnt/your-pool/signal-config:/etc/signal-cli-rest-api (if custom settings)
+      - /mnt/your-pool/signal-data:/home/.local/share/signal-cli
     environment:
-      - MODE=json-rpc  # Recommended for speed and resolves group reception issues
-      - AUTHENTICATION_API_TOKEN=your-secret-token  # Optional, for basic auth (save this token for n8n credentials)
-      - MAX_DB_CONNECTIONS=10  # Optimize as needed
+      - MODE=json-rpc  # Recommended for speed and group reception
+      - AUTHENTICATION_API_TOKEN=your-secret-token  # Optional
 ```
 
 ### 2. Signal Account Registration
@@ -67,23 +70,14 @@ services:
    docker-compose up -d
    ```
 
-2. Register your phone number:
-   ```bash
-   curl -X POST -H "Content-Type: application/json" \
-        -d '{"number": "+1234567890"}' \
-        http://localhost:8085/v1/register/+1234567890
-   ```
-
-3. Verify with the received SMS code:
-   ```bash
-   curl -X POST -H "Content-Type: application/json" \
-        -d '{"number": "+1234567890", "captcha": "signal-hcaptcha-token"}' \
-        http://localhost:8085/v1/register/+1234567890/verify/123456
-   ```
-
-4. **Alternative**: Link with existing Signal app using QR code:
+2. Link with existing Signal app using QR code:
    ```
    http://localhost:8085/v1/qrcodelink?device_name=n8n-signal
+   ```
+
+3. Or register a new number:
+   ```bash
+   curl -X POST 'http://localhost:8085/v1/register/+1234567890'
    ```
 
 ## 📦 Installation
@@ -97,166 +91,228 @@ services:
 
 ### Method 2: Manual Installation
 
-1. Navigate to your n8n installation directory
-2. Install the package:
-   ```bash
-   npm install n8n-nodes-signal-cli-rest-api
-   ```
-3. Restart n8n
+```bash
+npm install n8n-nodes-signal-cli-rest-api
+```
 
 ### Method 3: Development Setup
 
-1. Clone this repository:
-   ```bash
-   git clone https://github.com/zblaze/n8n-nodes-signal.git
-   cd n8n-nodes-signal
-   ```
-
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-
-3. Build the node:
-   ```bash
-   npm run build
-   ```
-
-4. Link to your n8n installation:
-   ```bash
-   npm link
-   cd /path/to/n8n
-   npm link n8n-nodes-signal
-   ```
+```bash
+git clone https://github.com/zblaze/n8n-nodes-signal.git
+cd n8n-nodes-signal
+npm install
+npm run build
+```
 
 ## ⚙️ Configuration
 
 ### Credentials Setup
 
-1. In n8n, create new credentials for **Signal API**
-2. Configure the following fields:
-   - **API URL**: `http://localhost:8085` (or your signal-cli-rest-api URL)
-   - **Phone Number**: Your registered Signal phone number (e.g., `+1234567890`)
-   - **API Token**: (Optional) The authentication token you set in docker-compose
-   - **Mode**: `json-rpc` (recommended for better performance)
+In n8n, create new credentials for **Signal API** and configure:
 
-### Node Configuration
-
-The Signal node supports multiple operations and can be configured through the n8n interface:
-
-- **Operation**: Choose from Send Message, Send Media, Create Group, etc.
-- **Recipient**: Phone number or group ID
-- **Message**: Text content to send
-- **Attachments**: Files to send with the message
-
-## 📚 Usage
-
-### Basic Message Sending
-
-1. Add the **Signal** node to your workflow
-2. Select **Send Message** operation
-3. Configure recipient and message content
-4. Connect your Signal credentials
-5. Execute the workflow
-
-### Receiving Messages (Trigger)
-
-1. Add the **Signal Trigger** node to start your workflow
-2. Configure the phone number to monitor
-3. Set up webhook or polling mechanism
-4. Connect subsequent nodes to process incoming messages
+| Field | Description | Example |
+|-------|-------------|---------|
+| **API URL** | URL of your signal-cli-rest-api instance | `http://localhost:8085` |
+| **Phone Number** | Registered Signal phone number | `+1234567890` |
+| **API Token** | Optional Bearer token for authentication | `your-secret-token` |
 
 ## 🔧 Operations
 
-### Trigger Operations
-- **Receive Message**: Receive text messages from Send text messages to contacts or groups
+### Messages
 
-### Send Operations
-- **Send Message**: Send text messages to contacts or groups
-- **Send Media**: Send images, documents, and other files
-- **Send Reaction**: React to messages with emoji
-- **Remove Reaction**: Remoce reaction from the message
+| Operation | Description |
+|-----------|-------------|
+| **Send Message** | Send a text message to a contact or group, optionally with file attachments |
+| **Send Reaction** | React to a message with an emoji |
+| **Remove Reaction** | Remove a previously sent reaction |
+| **Start Typing** | Show typing indicator to a recipient |
+| **Stop Typing** | Stop showing typing indicator |
+| **Mark As Read** | Send a read receipt for a message |
 
-### Group Operations  
-- **Update Group**: Modify group name
-- **List Groups**: Get all groups for the account
+#### Send Message — parameters
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| Recipient | ✅ | Phone number or group ID |
+| Message | | Text content (optional if sending attachments) |
+| Binary Fields | | One or more binary fields containing files to attach |
+| Timeout | | Request timeout in seconds (default: 60) |
 
-### Debug Mode
+#### Send Reaction — parameters
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| Recipient | ✅ | Phone number or group ID |
+| Emoji | ✅ | Reaction emoji (predefined list or custom) |
+| Target Author | ✅ | Phone number of the original message author |
+| Target Message Timestamp | ✅ | Timestamp of the message to react to (ms) |
 
-Enable debug logging in your docker-compose.yml:
+---
 
-```yaml
-environment:
-  - MODE=json-rpc
-  - LOG_LEVEL=debug
-  - AUTHENTICATION_API_TOKEN=your-secret-token
+### Attachments
+
+| Operation | Description |
+|-----------|-------------|
+| **List Attachments** | List all stored attachments for the account |
+| **Download Attachment** | Download an attachment as a binary file |
+| **Remove Attachment** | Delete an attachment from the server |
+
+---
+
+### Contacts
+
+| Operation | Description |
+|-----------|-------------|
+| **Get Contacts** | Retrieve the full contact list for the account |
+
+---
+
+### Groups
+
+| Operation | Description |
+|-----------|-------------|
+| **Get Groups** | Retrieve all groups for the account (may be slow — use timeout 300s) |
+| **Create Group** | Create a new Signal group with a name and initial members |
+| **Update Group** | Update a group's name or member list |
+
+#### Create / Update Group — parameters
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| Group ID | ✅ (update only) | ID of the group to update |
+| Group Name | | New name for the group |
+| Group Members | | Comma-separated phone numbers |
+
+---
+
+### Polls
+
+Signal polls let you send a question with multiple-choice answers to a contact or group.
+
+| Operation | Description |
+|-----------|-------------|
+| **Create Poll** | Send a new poll to a contact or group |
+| **Close Poll** | Close an existing poll so no more votes can be submitted |
+| **Vote on Poll** | Submit a vote on a poll |
+
+#### Create Poll — parameters
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| Recipient | ✅ | Phone number, username, or group ID |
+| Question | ✅ | The poll question |
+| Answers | ✅ | One answer per line (minimum 2) |
+| Allow Multiple Selections | | Whether voters can select more than one answer (default: false) |
+
+> **Response** includes a `timestamp` field — save it, you'll need it to close the poll or submit votes.
+
+#### Close Poll — parameters
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| Recipient | ✅ | Same recipient the poll was sent to |
+| Poll Timestamp | ✅ | Timestamp returned when the poll was created |
+
+#### Vote on Poll — parameters
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| Recipient | ✅ | Same recipient the poll was sent to |
+| Poll Timestamp | ✅ | Timestamp returned when the poll was created |
+| Poll Author | ✅ | Phone number or UUID of the poll creator |
+| Selected Answer Indexes | ✅ | Comma-separated 0-based indexes (e.g. `0,2`) |
+
+---
+
+### Search
+
+| Operation | Description |
+|-----------|-------------|
+| **Check Registration** | Check if one or more phone numbers are registered with Signal |
+
+#### Check Registration — parameters
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| Phone Numbers | ✅ | Comma-separated list of numbers to check |
+
+**Response example:**
+```json
+{
+  "results": [
+    { "number": "+1234567890", "registered": true },
+    { "number": "+0987654321", "registered": false }
+  ]
+}
 ```
 
-### Health Check
+---
 
-Test your signal-cli-rest-api setup:
+### Signal Trigger
 
+The **Signal Trigger** node starts a workflow when a new message arrives via WebSocket.
+
+| Parameter | Description |
+|-----------|-------------|
+| Reconnect Delay | Seconds to wait before reconnecting on disconnect |
+| Ignore Messages | Skip messages with text content |
+| Ignore Attachments | Skip messages with attachments |
+| Ignore Reactions | Skip messages with reactions |
+
+**Output fields:**
+
+| Field | Description |
+|-------|-------------|
+| `messageText` | Text content of the message |
+| `attachments` | List of received attachments |
+| `reactions` | Reaction data if present |
+| `sourceName` | Display name of the sender |
+| `sourceUuid` | UUID of the sender |
+| `groupInternalId` | Group ID (if message was in a group) |
+| `groupName` | Group name (if message was in a group) |
+| `timestamp` | Message timestamp (use for reactions, read receipts, polls) |
+| `messageType` | `incoming` or `outgoing` |
+| `envelope` | Full raw envelope from Signal |
+
+> **Tip:** The `timestamp` from the trigger output is what you pass as **Target Message Timestamp**, **Poll Timestamp**, etc. in subsequent nodes.
+
+---
+
+## 🐞 Troubleshooting
+
+### "Specified account does not exist"
+Verify your registered account via:
 ```bash
-# Health check
-curl http://localhost:8085/v1/health
-
-# List registered numbers  
-curl http://localhost:8085/v1/accounts
+curl http://<host>:<port>/v1/accounts
 ```
+Compare the returned number character-by-character against the **Phone Number** in your n8n credentials — a typo is the most common cause.
+
+### Get Groups is slow or times out
+Set **Timeout** to `300` seconds for the Get Groups operation.
+
+### Attachments not downloading
+Check that the attachment ID is correct (use the value from the trigger's `attachments` field).
+
+---
 
 ## 🤝 Contributing
 
-We welcome contributions! Please follow these steps:
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
-1. **Fork** the repository
-2. **Create** a feature branch (`git checkout -b feature/amazing-feature`)
-3. **Commit** your changes (`git commit -m 'Add amazing feature'`)
-4. **Push** to the branch (`git push origin feature/amazing-feature`)
-5. **Open** a Pull Request
-
-### Development Guidelines
-
-- Follow TypeScript best practices
-- Add tests for new features
-- Update documentation
-- Follow n8n node development standards
-- Ensure compatibility with latest n8n version
-
-### Code Style
-
-```bash
-# Run linter
-npm run lint
-
-# Run tests
-npm run test
-
-# Build for production
-npm run build
-```
+---
 
 ## 💖 Support the Developer
 
-If you find this node helpful, consider supporting the developer:
-
 [![Ko-Fi](https://img.shields.io/badge/Ko--fi-F16061?style=for-the-badge&logo=ko-fi&logoColor=white)](https://ko-fi.com/zblaze)
-
 [![Coinbase Commerce](https://img.shields.io/badge/Coinbase-0052FF?style=for-the-badge&logo=Coinbase&logoColor=white)](https://commerce.coinbase.com/pay/144f37a1-7d1e-468c-979d-1c8c9bcfa14b)
 
-**Donation Links:**
-- ☕ [Ko-fi](https://ko-fi.com/zblaze) - Support with coffee
-- 💰 [Coinbase Commerce](https://commerce.coinbase.com/pay/144f37a1-7d1e-468c-979d-1c8c9bcfa14b) - Cryptocurrency donations
-
-Your support helps maintain and improve this project! 🙏
+---
 
 ## 📄 License
 
-This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
+MIT License — see [LICENSE](LICENSE) for details.
 
 ## 🔗 Related Links
 
 - [n8n Documentation](https://docs.n8n.io/)
-- [Signal CLI REST API](https://github.com/bbernhard/signal-cli-rest-api)
+- [signal-cli-rest-api](https://github.com/bbernhard/signal-cli-rest-api)
 - [Signal Messenger](https://signal.org/)
 - [n8n Community](https://community.n8n.io/)
 
@@ -264,7 +320,4 @@ This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) 
 
 <div align="center">
   <p>Made with ❤️ for the n8n community</p>
-  <p>
-    <a href="#-table-of-contents">Back to top</a>
-  </p>
 </div>

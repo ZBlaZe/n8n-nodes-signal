@@ -9,6 +9,8 @@ import { executeMessagesOperation } from './messages';
 import { executeGroupsOperation } from './groups';
 import { executeContactsOperation } from './contacts';
 import { executeAttachmentsOperation } from './attachments';
+import { executePollsOperation } from './polls';
+import { executeSearchOperation } from './search';
 
 export class Signal implements INodeType {
     description: INodeTypeDescription = {
@@ -112,25 +114,51 @@ export class Signal implements INodeType {
                     {
                         name: 'Groups: Update Group',
                         value: 'updateGroup',
-                        description: 'Update a Signal group’s name or members',
+                        description: 'Update a Signal group\'s name or members',
                         action: 'Update a group',
                     },
+                    {
+                        name: 'Polls: Create Poll',
+                        value: 'createPoll',
+                        description: 'Create a new poll and send it to a contact or group',
+                        action: 'Create a poll',
+                    },
+                    {
+                        name: 'Polls: Close Poll',
+                        value: 'closePoll',
+                        description: 'Close an existing poll',
+                        action: 'Close a poll',
+                    },
+                    {
+                        name: 'Polls: Vote on Poll',
+                        value: 'votePoll',
+                        description: 'Submit a vote on a poll',
+                        action: 'Vote on a poll',
+                    },
+                    {
+												name: 'Search: Search Numbers',
+												value: 'searchContacts',
+												description: 'Check if one or more phone numbers are registered with Signal',
+												action: 'Search numbers',
+										},
                 ],
             },
+            // ─── Recipient (shared) ───────────────────────────────────────────
             {
                 displayName: 'Recipient',
                 name: 'recipient',
                 type: 'string',
                 default: '',
-                placeholder: '+1234567890 or groupId',
-                description: 'Phone number or group ID to send the message, reaction, or typing indicator to',
+                placeholder: '+1234567890 or group.XXXX==',
+                description: 'Phone number, username, or group ID',
                 required: true,
                 displayOptions: {
                     show: {
-                        operation: ['sendMessage', 'sendReaction', 'removeReaction', 'startTyping', 'stopTyping', 'markAsRead'],
+                        operation: ['sendMessage', 'sendReaction', 'removeReaction', 'startTyping', 'stopTyping', 'markAsRead', 'createPoll', 'closePoll', 'votePoll'],
                     },
                 },
             },
+            // ─── Messages ────────────────────────────────────────────────────
             {
                 displayName: 'Message',
                 name: 'message',
@@ -174,6 +202,7 @@ export class Signal implements INodeType {
                     },
                 ],
             },
+            // ─── Groups ──────────────────────────────────────────────────────
             {
                 displayName: 'Group ID',
                 name: 'groupId',
@@ -213,6 +242,7 @@ export class Signal implements INodeType {
                     },
                 },
             },
+            // ─── Reactions ───────────────────────────────────────────────────
             {
                 displayName: 'Emoji',
                 name: 'emoji',
@@ -268,6 +298,7 @@ export class Signal implements INodeType {
                     },
                 },
             },
+            // ─── Attachments ─────────────────────────────────────────────────
             {
                 displayName: 'Attachment ID',
                 name: 'attachmentId',
@@ -282,6 +313,108 @@ export class Signal implements INodeType {
                     },
                 },
             },
+            // ─── Polls ───────────────────────────────────────────────────────
+            {
+                displayName: 'Question',
+                name: 'pollQuestion',
+                type: 'string',
+                default: '',
+                placeholder: 'What\'s your favourite fruit?',
+                description: 'The poll question',
+                required: true,
+                displayOptions: {
+                    show: {
+                        operation: ['createPoll'],
+                    },
+                },
+            },
+            {
+                displayName: 'Answers',
+                name: 'pollAnswers',
+                type: 'string',
+                default: '',
+                placeholder: 'apple\nbanana\norange',
+                description: 'One answer per line (minimum 2 answers required)',
+                required: true,
+                typeOptions: {
+                    rows: 4,
+                },
+                displayOptions: {
+                    show: {
+                        operation: ['createPoll'],
+                    },
+                },
+            },
+            {
+                displayName: 'Allow Multiple Selections',
+                name: 'pollAllowMultiple',
+                type: 'boolean',
+                default: false,
+                description: 'Whether to allow voters to select more than one answer',
+                displayOptions: {
+                    show: {
+                        operation: ['createPoll'],
+                    },
+                },
+            },
+            {
+                displayName: 'Poll Timestamp',
+                name: 'pollTimestamp',
+                type: 'string',
+                default: '',
+                placeholder: '1769271479',
+                description: 'Timestamp of the poll (returned when the poll was created)',
+                required: true,
+                displayOptions: {
+                    show: {
+                        operation: ['closePoll', 'votePoll'],
+                    },
+                },
+            },
+            {
+                displayName: 'Poll Author',
+                name: 'pollAuthor',
+                type: 'string',
+                default: '',
+                placeholder: '+1234567890 or UUID',
+                description: 'Phone number or UUID of the poll author',
+                required: true,
+                displayOptions: {
+                    show: {
+                        operation: ['votePoll'],
+                    },
+                },
+            },
+            {
+                displayName: 'Selected Answer Indexes',
+                name: 'pollSelectedAnswers',
+                type: 'string',
+                default: '',
+                placeholder: '0,1',
+                description: 'Comma-separated list of answer indexes to vote for (0-based)',
+                required: true,
+                displayOptions: {
+                    show: {
+                        operation: ['votePoll'],
+                    },
+                },
+            },
+            // ─── Search ──────────────────────────────────────────────────────
+            {
+                displayName: 'Phone Numbers',
+                name: 'searchNumbers',
+                type: 'string',
+                default: '',
+                placeholder: '+1234567890,+0987654321',
+                description: 'Comma-separated list of phone numbers to check',
+                required: true,
+                displayOptions: {
+                    show: {
+                        operation: ['searchContacts'],
+                    },
+                },
+            },
+            // ─── Timeout (shared) ─────────────────────────────────────────────
             {
                 displayName: 'Timeout (seconds)',
                 name: 'timeout',
@@ -290,7 +423,7 @@ export class Signal implements INodeType {
                 description: 'Request timeout in seconds (set higher for Get Groups, e.g., 300)',
                 displayOptions: {
                     show: {
-                        operation: ['sendMessage', 'sendReaction', 'removeReaction', 'startTyping', 'stopTyping', 'markAsRead', 'getContacts', 'getGroups', 'createGroup', 'updateGroup', 'listAttachments', 'downloadAttachment', 'removeAttachment'],
+                        operation: ['sendMessage', 'sendReaction', 'removeReaction', 'startTyping', 'stopTyping', 'markAsRead', 'getContacts', 'getGroups', 'createGroup', 'updateGroup', 'listAttachments', 'downloadAttachment', 'removeAttachment', 'createPoll', 'closePoll', 'votePoll', 'searchContacts'],
                     },
                 },
                 typeOptions: {
@@ -320,9 +453,9 @@ export class Signal implements INodeType {
             const inputBinaryFields = binaryFields.binaryFieldValues
                 ? binaryFields.binaryFieldValues
                     .map(value => value.inputBinaryField)
-                    .filter(field => field.trim() !== '') // Filter out empty fields
+                    .filter(field => field.trim() !== '')
                 : [];
-            
+
             this.logger.debug(`Signal: Input binary fields for item ${i}: ${JSON.stringify(inputBinaryFields)}`);
 
             const params = {
@@ -335,6 +468,13 @@ export class Signal implements INodeType {
                 targetAuthor: this.getNodeParameter('targetAuthor', i, '') as string,
                 targetSentTimestamp: this.getNodeParameter('targetSentTimestamp', i, 0) as number,
                 attachmentId: this.getNodeParameter('attachmentId', i, '') as string,
+                pollQuestion: this.getNodeParameter('pollQuestion', i, '') as string,
+                pollAnswers: this.getNodeParameter('pollAnswers', i, '') as string,
+                pollAllowMultiple: this.getNodeParameter('pollAllowMultiple', i, false) as boolean,
+                pollTimestamp: this.getNodeParameter('pollTimestamp', i, '') as string,
+                pollAuthor: this.getNodeParameter('pollAuthor', i, '') as string,
+                pollSelectedAnswers: this.getNodeParameter('pollSelectedAnswers', i, '') as string,
+                searchNumbers: this.getNodeParameter('searchNumbers', i, '') as string,
                 inputBinaryFields,
                 timeout,
                 apiUrl,
@@ -352,6 +492,10 @@ export class Signal implements INodeType {
                     result = await executeGroupsOperation.call(this, operation, i, params);
                 } else if (operation === 'getContacts') {
                     result = await executeContactsOperation.call(this, operation, i, params);
+                } else if (['createPoll', 'closePoll', 'votePoll'].includes(operation)) {
+                    result = await executePollsOperation.call(this, operation, i, params);
+                } else if (operation === 'searchContacts') {
+                    result = await executeSearchOperation.call(this, operation, i, params);
                 } else {
                     throw new NodeApiError(this.getNode(), { message: 'Unknown operation' });
                 }
