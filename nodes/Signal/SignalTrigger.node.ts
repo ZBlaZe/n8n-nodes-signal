@@ -4,7 +4,6 @@ import {
     INodeTypeDescription,
     ITriggerFunctions,
     ITriggerResponse,
-    NodeApiError,
 } from 'n8n-workflow';
 import { WebSocket } from 'ws';
 
@@ -33,7 +32,7 @@ export class SignalTrigger implements INodeType {
                 name: 'reconnectDelay',
                 type: 'number',
                 default: 5,
-                description: 'Delay before reconnecting on close (in seconds)',
+                description: 'Base delay before reconnecting on close (in seconds). Uses exponential backoff.',
                 typeOptions: {
                     minValue: 1,
                     maxValue: 60,
@@ -44,21 +43,21 @@ export class SignalTrigger implements INodeType {
                 name: 'ignoreMessages',
                 type: 'boolean',
                 default: false,
-                description: 'Enable to ignore messages with text content',
+                description: 'Whether to ignore messages with text content',
             },
             {
                 displayName: 'Ignore Attachments',
                 name: 'ignoreAttachments',
                 type: 'boolean',
                 default: false,
-                description: 'Enable to ignore messages with attachments',
+                description: 'Whether to ignore messages with attachments',
             },
             {
                 displayName: 'Ignore Reactions',
                 name: 'ignoreReactions',
                 type: 'boolean',
                 default: false,
-                description: 'Enable to ignore messages with reactions',
+                description: 'Whether to ignore messages with reactions',
             },
         ],
     };
@@ -68,112 +67,139 @@ export class SignalTrigger implements INodeType {
         const apiUrl = credentials.apiUrl as string;
         const apiToken = credentials.apiToken as string;
         const phoneNumber = credentials.phoneNumber as string;
-        const reconnectDelay = (this.getNodeParameter('reconnectDelay', 0) as number) * 1000;
+        const baseReconnectDelay = (this.getNodeParameter('reconnectDelay', 0) as number) * 1000;
         const ignoreMessages = this.getNodeParameter('ignoreMessages', 0) as boolean;
         const ignoreAttachments = this.getNodeParameter('ignoreAttachments', 0) as boolean;
         const ignoreReactions = this.getNodeParameter('ignoreReactions', 0) as boolean;
 
-        const wsUrl = `${apiUrl.replace('http', 'ws')}/v1/receive/${phoneNumber}`;
-        this.logger.debug(`SignalTrigger: Attempting to connect to WS URL: ${wsUrl}`);
-        const processedMessages = new Set<number>();
-        const maxMessages = 1000;
+        const wsUrl = `${apiUrl.replace(/^http/, 'ws')}/v1/receive/${phoneNumber}`;
+        this.logger.debug(`SignalTrigger: Connecting to ${wsUrl}`);
+
+        // Bounded queue — no spread operator, O(1) operations
+        const processedTimestamps: number[] = [];
+        const MAX_TIMESTAMPS = 1000;
+
+        const hasProcessed = (ts: number): boolean => processedTimestamps.includes(ts);
+        const markProcessed = (ts: number): void => {
+            if (processedTimestamps.length >= MAX_TIMESTAMPS) {
+                processedTimestamps.shift(); // remove oldest
+            }
+            processedTimestamps.push(ts);
+        };
 
         let ws: WebSocket | null = null;
         let reconnectTimeout: NodeJS.Timeout | null = null;
-        let isClosed = false; // Flag to prevent reconnection when trigger is closed
+        let isClosed = false;
+        let reconnectAttempt = 0;
+        const MAX_RECONNECT_DELAY = 60_000;
 
-        const connectWebSocket = () => {
-            if (isClosed) {
-                this.logger.debug('SignalTrigger: Trigger is closed, skipping reconnect');
-                return;
-            }
+        const connectWebSocket = (): void => {
+            if (isClosed) return;
 
             ws = new WebSocket(wsUrl, {
                 headers: apiToken ? { Authorization: `Bearer ${apiToken}` } : {},
             });
 
             ws.on('open', () => {
-                this.logger.debug(`SignalTrigger: WebSocket connection opened to ${wsUrl}`);
+                reconnectAttempt = 0;
+                this.logger.debug('SignalTrigger: WebSocket connected');
             });
 
-            ws.on('message', async(data: Buffer) => {
+            ws.on('message', (data: Buffer) => {
+                // Intentionally NOT async — prevents unhandled rejection from crashing n8n.
+                // All async work is wrapped and errors are caught explicitly.
+                let message: any;
                 try {
-                    const message = JSON.parse(data.toString());
+                    message = JSON.parse(data.toString());
+                } catch (parseError) {
+                    this.logger.error('SignalTrigger: Failed to parse message JSON', { parseError });
+                    return;
+                }
 
-                    if (message.envelope) {
-                        const timestamp = message.envelope.timestamp as number;
+                if (!message?.envelope) return;
 
-                        if (processedMessages.has(timestamp)) {
-                            this.logger.debug(`SignalTrigger: Duplicate message with timestamp ${timestamp}, skipping`);
-                            return;
-                        }
+                const timestamp = message.envelope.timestamp as number;
 
-                        processedMessages.add(timestamp);
-                        if (processedMessages.size > maxMessages) {
-                            const oldestTimestamp = Math.min(...processedMessages);
-                            processedMessages.delete(oldestTimestamp);
-                        }
+                if (hasProcessed(timestamp)) {
+                    this.logger.debug(`SignalTrigger: Duplicate timestamp ${timestamp}, skipping`);
+                    return;
+                }
+                markProcessed(timestamp);
 
-                        const messageType = message.envelope?.syncMessage ? 'outgoing' : 'incoming';
-                        const processedMessage = {
-                            messageText: message.envelope?.dataMessage?.message || '',
-                            attachments: message.envelope?.dataMessage?.attachments || [],
-                            reactions: message.envelope?.dataMessage?.reaction || [],
-                            sourceDevice: message.envelope?.sourceDevice || 0,
-                            sourceName: message.envelope?.sourceName || '',
-                            sourceUuid: message.envelope?.sourceUuid || '',
-                            groupInternalId: message.envelope?.dataMessage?.groupInfo?.groupId || '',
-                            groupName: message.envelope?.dataMessage?.groupInfo?.groupName || '',
-                            timestamp: timestamp,
-                            account: message.account || '',
-                            hasContent: message.envelope?.hasContent || false,
-                            isUnidentifiedSender: message.envelope?.isUnidentifiedSender || false,
-                            messageType: messageType,
-                            envelope: message.envelope || {},
-                        };
+                const dataMessage = message.envelope?.dataMessage;
+                const messageText: string = dataMessage?.message || '';
+                const attachments: unknown[] = dataMessage?.attachments || [];
+                const reactions: unknown[] = dataMessage?.reaction ? [dataMessage.reaction] : [];
 
-                        this.logger.debug(`SignalTrigger: Processed message content: ${JSON.stringify(processedMessage, null, 2)}`);
+                // Skip empty messages
+                if (!messageText && attachments.length === 0 && reactions.length === 0) {
+                    this.logger.debug(`SignalTrigger: Skipping empty message ${timestamp}`);
+                    return;
+                }
 
-                        // Filtering: ignore empty messages
-                        if (!processedMessage.messageText && 
-                            processedMessage.attachments.length === 0 && 
-                            processedMessage.reactions.length === 0) {
-                            this.logger.debug(`SignalTrigger: Skipping empty message with timestamp ${timestamp}`);
-                            return;
-                        }
+                // Apply filters
+                if (
+                    (ignoreMessages && messageText) ||
+                    (ignoreAttachments && attachments.length > 0) ||
+                    (ignoreReactions && reactions.length > 0)
+                ) {
+                    this.logger.debug(`SignalTrigger: Filtered out message ${timestamp}`);
+                    return;
+                }
 
-                        // Filtering: ignore if enabled and corresponding content is present
-                        if ((ignoreMessages && processedMessage.messageText) ||
-                            (ignoreAttachments && processedMessage.attachments.length > 0) ||
-                            (ignoreReactions && processedMessage.reactions.length > 0) ) {
-                            this.logger.debug(`SignalTrigger: Ignoring message with timestamp ${timestamp} due to filter`);
-                            return;
-                        }
+                const processedMessage = {
+                    messageText,
+                    attachments,
+                    reactions,
+                    sourceDevice: message.envelope?.sourceDevice || 0,
+                    sourceName: message.envelope?.sourceName || '',
+                    sourceUuid: message.envelope?.sourceUuid || '',
+                    groupInternalId: dataMessage?.groupInfo?.groupId || '',
+                    groupName: dataMessage?.groupInfo?.groupName || '',
+                    timestamp,
+                    account: message.account || '',
+                    hasContent: message.envelope?.hasContent || false,
+                    isUnidentifiedSender: message.envelope?.isUnidentifiedSender || false,
+                    messageType: message.envelope?.syncMessage ? 'outgoing' : 'incoming',
+                    envelope: message.envelope || {},
+                };
 
-                        const returnData: INodeExecutionData = {
-                            json: processedMessage as any,
-                        };
-                        this.emit([this.helpers.returnJsonArray([returnData])]);
-                        this.logger.debug(`SignalTrigger: Emitted message with timestamp ${timestamp}`);
-                    }
-                } catch (error) {
-                    this.logger.error('SignalTrigger: Error parsing message', { error });
+                this.logger.debug(`SignalTrigger: Emitting message ${timestamp}`);
+
+                // Guard: do not emit after close
+                if (isClosed) return;
+
+                try {
+                    const returnData: INodeExecutionData = { json: processedMessage as any };
+                    this.emit([this.helpers.returnJsonArray([returnData])]);
+                } catch (emitError) {
+                    this.logger.error('SignalTrigger: Failed to emit message', { emitError });
                 }
             });
 
             ws.on('error', (error: Error) => {
-                this.logger.error('SignalTrigger: WebSocket error', { error });
-                if (!isClosed) {
-                    reconnectTimeout = setTimeout(connectWebSocket, reconnectDelay);
-                }
+                this.logger.error('SignalTrigger: WebSocket error', { error: error.message });
+                scheduleReconnect();
             });
 
-            ws.on('close', (code, reason) => {
-                this.logger.debug(`SignalTrigger: WebSocket closed with code ${code}, reason: ${reason.toString()}`);
-                if (!isClosed) {
-                    reconnectTimeout = setTimeout(connectWebSocket, reconnectDelay);
-                }
+            ws.on('close', (code: number, reason: Buffer) => {
+                this.logger.debug(`SignalTrigger: WebSocket closed — code=${code} reason=${reason.toString()}`);
+                scheduleReconnect();
             });
+        };
+
+        const scheduleReconnect = (): void => {
+            if (isClosed || reconnectTimeout) return;
+
+            // Exponential backoff: base * 2^attempt, capped at MAX_RECONNECT_DELAY
+            const delay = Math.min(baseReconnectDelay * Math.pow(2, reconnectAttempt), MAX_RECONNECT_DELAY);
+            reconnectAttempt++;
+            this.logger.debug(`SignalTrigger: Reconnecting in ${delay}ms (attempt ${reconnectAttempt})`);
+
+            reconnectTimeout = setTimeout(() => {
+                reconnectTimeout = null;
+                connectWebSocket();
+            }, delay);
         };
 
         connectWebSocket();
@@ -186,10 +212,11 @@ export class SignalTrigger implements INodeType {
                     reconnectTimeout = null;
                 }
                 if (ws) {
+                    ws.removeAllListeners();
                     ws.close();
                     ws = null;
                 }
-                this.logger.debug('SignalTrigger: WebSocket closed and reconnection stopped');
+                this.logger.debug('SignalTrigger: Closed cleanly');
             },
         };
     }

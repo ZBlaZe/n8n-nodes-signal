@@ -1,6 +1,6 @@
 {
   "name": "n8n-nodes-signal-cli-rest-api",
-  "version": "0.8.2",
+  "version": "0.9.0",
   "description": "Signal Node for n8n using signal-cli-rest-api",
   "repository": {
     "type": "git",
@@ -33,16 +33,16 @@
     "ws": "^8.18.0"
   },
   "peerDependencies": {
-    "n8n-workflow": ">=1.109.0"
+    "n8n-workflow": ">=2.0.0"
   },
   "devDependencies": {
     "@types/node": "^20.12.12",
     "@types/ws": "^8.5.12",
     "copyfiles": "^2.4.1",
-    "n8n-workflow": "1.109.0",
+    "n8n-workflow": "2.16.0",
     "typescript": "^5.4.5"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   }
 }
