@@ -76,6 +76,18 @@ export class Signal implements INodeType {
                         action: 'Mark as read',
                     },
                     {
+                        name: 'Messages: Answer Message',
+                        value: 'answerMessage',
+                        description: 'Reply to a specific message with a quote reference',
+                        action: 'Answer a message',
+                    },
+                    {
+                        name: 'Messages: Forward Message',
+                        value: 'forwardMessage',
+                        description: 'Forward a message, including its attachments, to another contact or group',
+                        action: 'Forward a message',
+                    },
+                    {
                         name: 'Attachments: List Attachments',
                         value: 'listAttachments',
                         description: 'List attachments for the account',
@@ -154,7 +166,7 @@ export class Signal implements INodeType {
                 required: true,
                 displayOptions: {
                     show: {
-                        operation: ['sendMessage', 'sendReaction', 'removeReaction', 'startTyping', 'stopTyping', 'markAsRead', 'createPoll', 'closePoll', 'votePoll'],
+                        operation: ['sendMessage', 'sendReaction', 'removeReaction', 'startTyping', 'stopTyping', 'markAsRead', 'createPoll', 'closePoll', 'votePoll', 'answerMessage', 'forwardMessage'],
                     },
                 },
             },
@@ -167,7 +179,7 @@ export class Signal implements INodeType {
                 description: 'The text message to send (optional for attachments)',
                 displayOptions: {
                     show: {
-                        operation: ['sendMessage'],
+                        operation: ['sendMessage', 'answerMessage', 'forwardMessage'],
                     },
                 },
             },
@@ -183,7 +195,7 @@ export class Signal implements INodeType {
                 description: 'Binary fields for attachments (empty or invalid fields are ignored)',
                 displayOptions: {
                     show: {
-                        operation: ['sendMessage'],
+                        operation: ['sendMessage', 'answerMessage', 'forwardMessage'],
                     },
                 },
                 options: [
@@ -277,11 +289,11 @@ export class Signal implements INodeType {
                 type: 'string',
                 default: '',
                 placeholder: '+1234567890',
-                description: 'Phone number of the message author to react to',
+                description: 'Phone number of the original message\'s author (target of the reaction or reply)',
                 required: true,
                 displayOptions: {
                     show: {
-                        operation: ['sendReaction', 'removeReaction'],
+                        operation: ['sendReaction', 'removeReaction', 'answerMessage'],
                     },
                 },
             },
@@ -290,11 +302,36 @@ export class Signal implements INodeType {
                 name: 'targetSentTimestamp',
                 type: 'number',
                 default: 0,
-                description: 'Timestamp of the message to react to (in milliseconds)',
+                description: 'Timestamp of the target message, in milliseconds (used for reactions, read receipts, and replies)',
                 required: true,
                 displayOptions: {
                     show: {
-                        operation: ['sendReaction', 'removeReaction', 'markAsRead'],
+                        operation: ['sendReaction', 'removeReaction', 'markAsRead', 'answerMessage'],
+                    },
+                },
+            },
+            {
+                displayName: 'Quoted Message Text',
+                name: 'quoteMessage',
+                type: 'string',
+                default: '',
+                description: 'Text snippet of the original message, shown as the quote preview (recommended so recipients see what is being replied to)',
+                displayOptions: {
+                    show: {
+                        operation: ['answerMessage'],
+                    },
+                },
+            },
+            {
+                displayName: 'Source Attachment IDs',
+                name: 'sourceAttachmentIds',
+                type: 'string',
+                default: '',
+                placeholder: 'attachment_id_1.jpg,attachment_id_2.png',
+                description: 'Comma-separated attachment IDs from the original message (e.g. from the Signal Trigger\'s "attachments" field) to fetch and re-send along with the forward',
+                displayOptions: {
+                    show: {
+                        operation: ['forwardMessage'],
                     },
                 },
             },
@@ -423,7 +460,7 @@ export class Signal implements INodeType {
                 description: 'Request timeout in seconds (set higher for Get Groups, e.g., 300)',
                 displayOptions: {
                     show: {
-                        operation: ['sendMessage', 'sendReaction', 'removeReaction', 'startTyping', 'stopTyping', 'markAsRead', 'getContacts', 'getGroups', 'createGroup', 'updateGroup', 'listAttachments', 'downloadAttachment', 'removeAttachment', 'createPoll', 'closePoll', 'votePoll', 'searchContacts'],
+                        operation: ['sendMessage', 'sendReaction', 'removeReaction', 'startTyping', 'stopTyping', 'markAsRead', 'answerMessage', 'forwardMessage', 'getContacts', 'getGroups', 'createGroup', 'updateGroup', 'listAttachments', 'downloadAttachment', 'removeAttachment', 'createPoll', 'closePoll', 'votePoll', 'searchContacts'],
                     },
                 },
                 typeOptions: {
@@ -467,6 +504,8 @@ export class Signal implements INodeType {
                 emoji: this.getNodeParameter('emoji', i, '') as string,
                 targetAuthor: this.getNodeParameter('targetAuthor', i, '') as string,
                 targetSentTimestamp: this.getNodeParameter('targetSentTimestamp', i, 0) as number,
+                quoteMessage: this.getNodeParameter('quoteMessage', i, '') as string,
+                sourceAttachmentIds: this.getNodeParameter('sourceAttachmentIds', i, '') as string,
                 attachmentId: this.getNodeParameter('attachmentId', i, '') as string,
                 pollQuestion: this.getNodeParameter('pollQuestion', i, '') as string,
                 pollAnswers: this.getNodeParameter('pollAnswers', i, '') as string,
@@ -484,7 +523,7 @@ export class Signal implements INodeType {
 
             try {
                 let result: INodeExecutionData;
-                if (['sendMessage', 'sendReaction', 'removeReaction', 'startTyping', 'stopTyping', 'markAsRead'].includes(operation)) {
+                if (['sendMessage', 'sendReaction', 'removeReaction', 'startTyping', 'stopTyping', 'markAsRead', 'answerMessage', 'forwardMessage'].includes(operation)) {
                     result = await executeMessagesOperation.call(this, operation, i, params);
                 } else if (['listAttachments', 'downloadAttachment', 'removeAttachment'].includes(operation)) {
                     result = await executeAttachmentsOperation.call(this, operation, i, params);

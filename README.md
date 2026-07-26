@@ -27,6 +27,8 @@
 
 - **Send Messages**: Send text messages to individuals or groups
 - **Send Media**: Send images, files, and attachments
+- **Reply to Messages**: Answer a specific message with a quote reference
+- **Forward Messages**: Forward a message, including its attachments, to another contact or group
 - **Reactions**: React to messages or remove reactions
 - **Typing Indicators**: Show/hide typing status
 - **Read Receipts**: Mark messages as read
@@ -128,6 +130,8 @@ In n8n, create new credentials for **Signal API** and configure:
 | **Start Typing** | Show typing indicator to a recipient |
 | **Stop Typing** | Stop showing typing indicator |
 | **Mark As Read** | Send a read receipt for a message |
+| **Answer Message** | Reply to a specific message with a quote reference |
+| **Forward Message** | Forward a message, including its attachments, to another contact or group |
 
 #### Send Message — parameters
 | Parameter | Required | Description |
@@ -144,6 +148,30 @@ In n8n, create new credentials for **Signal API** and configure:
 | Emoji | ✅ | Reaction emoji (predefined list or custom) |
 | Target Author | ✅ | Phone number of the original message author |
 | Target Message Timestamp | ✅ | Timestamp of the message to react to (ms) |
+
+#### Answer Message — parameters
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| Recipient | ✅ | Phone number or group ID to send the reply to |
+| Message | | Reply text (optional if sending attachments) |
+| Target Author | ✅ | Phone number of the original message's author |
+| Target Message Timestamp | ✅ | Timestamp of the message being replied to (ms) |
+| Quoted Message Text | | Text snippet of the original message shown in the quote preview |
+| Binary Fields | | One or more binary fields containing files to attach |
+| Timeout | | Request timeout in seconds (default: 60) |
+
+> Uses signal-cli-rest-api's `quote_timestamp` / `quote_author` / `quote_message` fields on `/v2/send` — there's no dedicated "reply" endpoint, so this composes a regular send with a quote reference.
+
+#### Forward Message — parameters
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| Recipient | ✅ | Phone number or group ID to forward the message to |
+| Message | | Text content to forward (e.g. the original `messageText` from the trigger) |
+| Source Attachment IDs | | Comma-separated attachment IDs from the original message (from the trigger's `attachments` field) — fetched from the server and re-sent automatically |
+| Binary Fields | | Additional binary fields to attach (e.g. files you already downloaded yourself) |
+| Timeout | | Request timeout in seconds (default: 60) |
+
+> The underlying API has no native "forward" call, so this re-sends the text and attachments as a new message to the chosen recipient. It won't carry Signal's built-in "Forwarded" badge, since that's not exposed by signal-cli-rest-api.
 
 ---
 
@@ -267,7 +295,7 @@ The **Signal Trigger** node starts a workflow when a new message arrives via Web
 | `messageType` | `incoming` or `outgoing` |
 | `envelope` | Full raw envelope from Signal |
 
-> **Tip:** The `timestamp` from the trigger output is what you pass as **Target Message Timestamp**, **Poll Timestamp**, etc. in subsequent nodes.
+> **Tip:** The `timestamp` from the trigger output is what you pass as **Target Message Timestamp**, **Poll Timestamp**, etc. in subsequent nodes. For **Forward Message**, the `id` of each entry in `attachments` is what you pass as **Source Attachment IDs**.
 
 ---
 
