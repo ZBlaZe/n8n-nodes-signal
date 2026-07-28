@@ -7,6 +7,15 @@ import {
     NodeApiError,
 } from 'n8n-workflow';
 import { WebSocket } from 'ws';
+import { createAxiosConfig, retryRequest } from './shared';
+import axios from 'axios';
+
+// Signal's protocol content-type for a message's overflow text. When a message body exceeds
+// ~2KB, the sending client truncates `dataMessage.message` and ships the FULL original text as
+// a pseudo-attachment of this type instead (see Signal-Android's MessageUtil.getSplitMessage,
+// MAX_INLINE_BODY_SIZE_BYTES). It's not a file the sender attached, so this node downloads its
+// content to restore the untruncated text and drops it from the emitted `attachments` list.
+const LONG_TEXT_ATTACHMENT_CONTENT_TYPE = 'text/x-signal-plain';
 
 export class SignalTrigger implements INodeType {
     description: INodeTypeDescription = {
@@ -126,9 +135,33 @@ export class SignalTrigger implements INodeType {
                         const pollVote = dataMessage?.pollVote || null;
                         const messageType = message.envelope?.syncMessage ? 'outgoing' : 'incoming';
 
+                        const rawAttachments: Array<{ contentType?: string; id?: string }> = dataMessage?.attachments || [];
+                        const longTextAttachment = rawAttachments.find(
+                            (attachment) => attachment?.contentType === LONG_TEXT_ATTACHMENT_CONTENT_TYPE,
+                        );
+                        const attachments = rawAttachments.filter((attachment) => attachment !== longTextAttachment);
+
+                        let messageText: string = dataMessage?.message || '';
+                        if (longTextAttachment?.id) {
+                            try {
+                                const attachmentResponse = await retryRequest(() =>
+                                    axios.get(`${apiUrl}/v1/attachments/${longTextAttachment.id}`, {
+                                        ...createAxiosConfig(apiToken, 30000),
+                                        responseType: 'arraybuffer',
+                                    })
+                                );
+                                if (attachmentResponse?.data && attachmentResponse.data.byteLength > 0) {
+                                    messageText = Buffer.from(attachmentResponse.data).toString('utf-8');
+                                    this.logger.debug(`SignalTrigger: Restored full long-text message (${messageText.length} chars) from attachment '${longTextAttachment.id}' for timestamp ${timestamp}`);
+                                }
+                            } catch (error) {
+                                this.logger.warn(`SignalTrigger: Failed to fetch long-text attachment '${longTextAttachment.id}' for timestamp ${timestamp}; messageText stays truncated`, { error });
+                            }
+                        }
+
                         const processedMessage = {
-                            messageText: dataMessage?.message || '',
-                            attachments: dataMessage?.attachments || [],
+                            messageText,
+                            attachments,
                             reactions: dataMessage?.reaction || [],
                             pollVote: pollVote ? {
                                 author: pollVote.author || '',
@@ -140,6 +173,7 @@ export class SignalTrigger implements INodeType {
                             } : null,
                             sourceDevice: message.envelope?.sourceDevice || 0,
                             sourceName: message.envelope?.sourceName || '',
+                            sourceNumber: message.envelope?.sourceNumber || '',
                             sourceUuid: message.envelope?.sourceUuid || '',
                             groupInternalId: dataMessage?.groupInfo?.groupId || '',
                             groupName: dataMessage?.groupInfo?.groupName || '',

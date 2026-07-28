@@ -27,7 +27,7 @@
 
 - **Send Messages**: Send text messages to individuals or groups
 - **Send Media**: Send images, files, and attachments
-- **Reply to Messages**: Answer a specific message with a quote reference
+- **Reply to Messages**: Reply to a specific message with a quote reference
 - **Forward Messages**: Forward a message, including its attachments, to another contact or group
 - **Reactions**: React to messages or remove reactions
 - **Typing Indicators**: Show/hide typing status
@@ -130,7 +130,7 @@ In n8n, create new credentials for **Signal API** and configure:
 | **Start Typing** | Show typing indicator to a recipient |
 | **Stop Typing** | Stop showing typing indicator |
 | **Mark As Read** | Send a read receipt for a message |
-| **Answer Message** | Reply to a specific message with a quote reference |
+| **Reply Message** | Reply to a specific message with a quote reference |
 | **Forward Message** | Forward a message, including its attachments, to another contact or group |
 
 #### Send Message — parameters
@@ -146,21 +146,21 @@ In n8n, create new credentials for **Signal API** and configure:
 |-----------|----------|-------------|
 | Recipient | ✅ | Phone number or group ID |
 | Emoji | ✅ | Reaction emoji (predefined list or custom) |
-| Target Author | ✅ | Phone number of the original message author |
+| Target Author | ✅ | Phone number or UUID of the original message author |
 | Target Message Timestamp | ✅ | Timestamp of the message to react to (ms) |
 
-#### Answer Message — parameters
+#### Reply Message — parameters
 | Parameter | Required | Description |
 |-----------|----------|-------------|
 | Recipient | ✅ | Phone number or group ID to send the reply to |
 | Message | | Reply text (optional if sending attachments) |
-| Target Author | ✅ | Phone number of the original message's author |
+| Target Author | ✅ | Phone number or UUID of the original message's author |
 | Target Message Timestamp | ✅ | Timestamp of the message being replied to (ms) |
-| Quoted Message Text | | Text snippet of the original message shown in the quote preview |
+| Quoted Message Text | | Text snippet of the original message shown in the quote preview (optional but recommended) |
 | Binary Fields | | One or more binary fields containing files to attach |
 | Timeout | | Request timeout in seconds (default: 60) |
 
-> Uses signal-cli-rest-api's `quote_timestamp` / `quote_author` / `quote_message` fields on `/v2/send` — there's no dedicated "reply" endpoint, so this composes a regular send with a quote reference.
+> There's no dedicated "reply" endpoint — this sends signal-cli-rest-api's `quote_timestamp` / `quote_author` / `quote_message` fields alongside a regular send. Bind **Target Author** / **Target Message Timestamp** to the message you're replying to, e.g. from a Signal Trigger item: `{{ $json.sourceUuid }}` / `{{ $json.timestamp }}`. **Target Author accepts a UUID** (recommended — many Signal users don't expose a phone number at all) or a phone number.
 
 #### Forward Message — parameters
 | Parameter | Required | Description |
@@ -168,10 +168,9 @@ In n8n, create new credentials for **Signal API** and configure:
 | Recipient | ✅ | Phone number or group ID to forward the message to |
 | Message | | Text content to forward (e.g. the original `messageText` from the trigger) |
 | Source Attachment IDs | | Comma-separated attachment IDs from the original message (from the trigger's `attachments` field) — fetched from the server and re-sent automatically |
-| Binary Fields | | Additional binary fields to attach (e.g. files you already downloaded yourself) |
 | Timeout | | Request timeout in seconds (default: 60) |
 
-> The underlying API has no native "forward" call, so this re-sends the text and attachments as a new message to the chosen recipient. It won't carry Signal's built-in "Forwarded" badge, since that's not exposed by signal-cli-rest-api.
+> There's no native "forward" call either — bind **Message** and **Source Attachment IDs** by expression to the Signal Trigger's output, e.g. `{{ $json.messageText }}` and `{{ $json.attachments.map(a => a.id).join(',') }}`. Works with zero, one, or many attachments in the same call, no `IF` node needed. It won't carry Signal's built-in "Forwarded" badge, since that's not exposed by the API. Passing the mapped array directly (without `.join(',')`) also works — see note below.
 
 ---
 
@@ -285,7 +284,7 @@ The **Signal Trigger** node starts a workflow when a new message arrives via Web
 | Field | Description |
 |-------|-------------|
 | `messageText` | Text content of the message |
-| `attachments` | List of received attachments |
+| `attachments` | List of received attachments (Signal's `text/x-signal-plain` long-text pseudo-attachment is excluded — its content is merged into `messageText` instead, see note below) |
 | `reactions` | Reaction data if present |
 | `sourceName` | Display name of the sender |
 | `sourceUuid` | UUID of the sender |
@@ -296,6 +295,12 @@ The **Signal Trigger** node starts a workflow when a new message arrives via Web
 | `envelope` | Full raw envelope from Signal |
 
 > **Tip:** The `timestamp` from the trigger output is what you pass as **Target Message Timestamp**, **Poll Timestamp**, etc. in subsequent nodes. For **Forward Message**, the `id` of each entry in `attachments` is what you pass as **Source Attachment IDs**.
+>
+> **Note on list fields** (Source Attachment IDs, Group Members, Selected Answer Indexes, Phone Numbers): when a field's expression is *entirely* `{{ ... }}` with nothing else around it, n8n resolves it to its real type instead of stringifying it — so `{{ $json.attachments.map(a => a.id) }}` arrives as an actual array, not a joined string. Both a plain array expression and an explicit `.join(',')` are accepted here.
+>
+> **Note on timestamps:** signal-cli-rest-api is inconsistent here — `/v2/send`'s response returns `timestamp` as a JSON *string*, while **Target Message Timestamp** fields (reactions, read receipts, Reply Message) need to send it as a JSON *number*. This node accepts either shape and converts, so piping a Send Message response's `timestamp` straight into a later node's Target Message Timestamp works without an intermediate conversion step.
+>
+> **Note on long messages:** when a message body exceeds ~2KB, Signal truncates the regular text field and ships the full original text as a `text/x-signal-plain` pseudo-attachment instead (this is standard Signal protocol behavior, not a bug on either end). This node detects that attachment, downloads its content, and uses it as `messageText` — so you always get the untruncated text — while excluding the entry from `attachments` (it's not a real file). If the download fails, `messageText` falls back to the truncated body and a warning is logged.
 
 ---
 

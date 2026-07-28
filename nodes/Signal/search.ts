@@ -1,13 +1,9 @@
 import { IExecuteFunctions, INodeExecutionData, NodeApiError } from 'n8n-workflow';
-import { AxiosError, AxiosRequestConfig } from 'axios';
 import axios from 'axios';
-
-interface SignalApiErrorResponse {
-    error?: string;
-}
+import { createAxiosConfig, handleSignalApiError, parseDelimitedList, retryRequest } from './shared';
 
 interface OperationParams {
-    searchNumbers?: string;
+    searchNumbers?: string | string[];
     timeout: number;
     apiUrl: string;
     apiToken: string;
@@ -22,28 +18,14 @@ export async function executeSearchOperation(
 ): Promise<INodeExecutionData> {
     const { searchNumbers, timeout, apiUrl, apiToken, phoneNumber } = params;
 
-    const axiosConfig: AxiosRequestConfig = {
-        headers: apiToken ? { Authorization: `Bearer ${apiToken}` } : {},
-        timeout,
-    };
-
-    const retryRequest = async (request: () => Promise<any>, retries = 2, delay = 5000): Promise<any> => {
-        for (let attempt = 1; attempt <= retries; attempt++) {
-            try {
-                return await request();
-            } catch (error) {
-                if (attempt === retries) throw error;
-                await new Promise(resolve => setTimeout(resolve, delay));
-            }
-        }
-    };
+    const axiosConfig = createAxiosConfig(apiToken, timeout);
 
     try {
         if (operation === 'searchContacts') {
             if (!searchNumbers) {
                 throw new NodeApiError(this.getNode(), { message: 'At least one phone number is required for search' }, { itemIndex });
             }
-            const numbers = searchNumbers.split(',').map(n => n.trim()).filter(n => n !== '');
+            const numbers = parseDelimitedList(searchNumbers);
             if (numbers.length === 0) {
                 throw new NodeApiError(this.getNode(), { message: 'At least one valid phone number is required for search' }, { itemIndex });
             }
@@ -55,11 +37,6 @@ export async function executeSearchOperation(
         }
         throw new NodeApiError(this.getNode(), { message: 'Unknown operation' });
     } catch (error) {
-        const axiosError = error as AxiosError<SignalApiErrorResponse>;
-        throw new NodeApiError(this.getNode(), {
-            message: axiosError.message,
-            description: (axiosError.response?.data?.error || axiosError.message) as string,
-            httpCode: axiosError.response?.status?.toString() || 'unknown',
-        }, { itemIndex });
+        handleSignalApiError(this, error, itemIndex);
     }
 }

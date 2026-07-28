@@ -11,6 +11,33 @@ import { executeContactsOperation } from './contacts';
 import { executeAttachmentsOperation } from './attachments';
 import { executePollsOperation } from './polls';
 import { executeSearchOperation } from './search';
+import { coerceToNumber } from './shared';
+
+// Single source of truth for which operations belong to each resource group.
+// Referenced both by the field `displayOptions` below and by the routing in `execute()`,
+// so adding/removing an operation only requires updating one array.
+const MESSAGE_OPERATIONS = ['sendMessage', 'sendReaction', 'removeReaction', 'startTyping', 'stopTyping', 'markAsRead', 'replyMessage', 'forwardMessage'];
+const MESSAGE_TEXT_OPERATIONS = ['sendMessage', 'replyMessage', 'forwardMessage'];
+const BINARY_ATTACHMENT_OPERATIONS = ['sendMessage', 'replyMessage'];
+const REACTION_TARGET_OPERATIONS = ['sendReaction', 'removeReaction', 'replyMessage'];
+const TIMESTAMP_TARGET_OPERATIONS = ['sendReaction', 'removeReaction', 'markAsRead', 'replyMessage'];
+const ATTACHMENT_OPERATIONS = ['listAttachments', 'downloadAttachment', 'removeAttachment'];
+const ATTACHMENT_ID_OPERATIONS = ['downloadAttachment', 'removeAttachment'];
+const GROUP_OPERATIONS = ['getGroups', 'createGroup', 'updateGroup'];
+const GROUP_WRITE_OPERATIONS = ['createGroup', 'updateGroup'];
+const POLL_OPERATIONS = ['createPoll', 'closePoll', 'votePoll'];
+const CONTACT_OPERATIONS = ['getContacts'];
+const SEARCH_OPERATIONS = ['searchContacts'];
+
+const RECIPIENT_OPERATIONS = [...MESSAGE_OPERATIONS, ...POLL_OPERATIONS];
+const TIMEOUT_OPERATIONS = [
+    ...MESSAGE_OPERATIONS,
+    ...CONTACT_OPERATIONS,
+    ...GROUP_OPERATIONS,
+    ...ATTACHMENT_OPERATIONS,
+    ...POLL_OPERATIONS,
+    ...SEARCH_OPERATIONS,
+];
 
 export class Signal implements INodeType {
     description: INodeTypeDescription = {
@@ -76,10 +103,10 @@ export class Signal implements INodeType {
                         action: 'Mark as read',
                     },
                     {
-                        name: 'Messages: Answer Message',
-                        value: 'answerMessage',
+                        name: 'Messages: Reply Message',
+                        value: 'replyMessage',
                         description: 'Reply to a specific message with a quote reference',
-                        action: 'Answer a message',
+                        action: 'Reply to a message',
                     },
                     {
                         name: 'Messages: Forward Message',
@@ -166,7 +193,7 @@ export class Signal implements INodeType {
                 required: true,
                 displayOptions: {
                     show: {
-                        operation: ['sendMessage', 'sendReaction', 'removeReaction', 'startTyping', 'stopTyping', 'markAsRead', 'createPoll', 'closePoll', 'votePoll', 'answerMessage', 'forwardMessage'],
+                        operation: RECIPIENT_OPERATIONS,
                     },
                 },
             },
@@ -179,7 +206,7 @@ export class Signal implements INodeType {
                 description: 'The text message to send (optional for attachments)',
                 displayOptions: {
                     show: {
-                        operation: ['sendMessage', 'answerMessage', 'forwardMessage'],
+                        operation: MESSAGE_TEXT_OPERATIONS,
                     },
                 },
             },
@@ -195,7 +222,7 @@ export class Signal implements INodeType {
                 description: 'Binary fields for attachments (empty or invalid fields are ignored)',
                 displayOptions: {
                     show: {
-                        operation: ['sendMessage', 'answerMessage', 'forwardMessage'],
+                        operation: BINARY_ATTACHMENT_OPERATIONS,
                     },
                 },
                 options: [
@@ -213,6 +240,19 @@ export class Signal implements INodeType {
                         ],
                     },
                 ],
+            },
+            {
+                displayName: 'Source Attachment IDs',
+                name: 'sourceAttachmentIds',
+                type: 'string',
+                default: '',
+                placeholder: 'attachment_id_1.jpg,attachment_id_2.png',
+                description: 'Comma-separated attachment IDs already stored on the server (e.g. from the Signal Trigger\'s "attachments" field) to fetch and send along with the message — use this to forward a received attachment without downloading it separately',
+                displayOptions: {
+                    show: {
+                        operation: ['forwardMessage'],
+                    },
+                },
             },
             // ─── Groups ──────────────────────────────────────────────────────
             {
@@ -237,7 +277,7 @@ export class Signal implements INodeType {
                 description: 'Name of the group to create or update',
                 displayOptions: {
                     show: {
-                        operation: ['createGroup', 'updateGroup'],
+                        operation: GROUP_WRITE_OPERATIONS,
                     },
                 },
             },
@@ -250,7 +290,7 @@ export class Signal implements INodeType {
                 description: 'Comma-separated list of phone numbers to add to the group',
                 displayOptions: {
                     show: {
-                        operation: ['createGroup', 'updateGroup'],
+                        operation: GROUP_WRITE_OPERATIONS,
                     },
                 },
             },
@@ -288,12 +328,12 @@ export class Signal implements INodeType {
                 name: 'targetAuthor',
                 type: 'string',
                 default: '',
-                placeholder: '+1234567890',
-                description: 'Phone number of the original message\'s author (target of the reaction or reply)',
+                placeholder: '+1234567890 or UUID',
+                description: 'Phone number or UUID of the original message\'s author',
                 required: true,
                 displayOptions: {
                     show: {
-                        operation: ['sendReaction', 'removeReaction', 'answerMessage'],
+                        operation: REACTION_TARGET_OPERATIONS,
                     },
                 },
             },
@@ -306,7 +346,7 @@ export class Signal implements INodeType {
                 required: true,
                 displayOptions: {
                     show: {
-                        operation: ['sendReaction', 'removeReaction', 'markAsRead', 'answerMessage'],
+                        operation: TIMESTAMP_TARGET_OPERATIONS,
                     },
                 },
             },
@@ -318,20 +358,7 @@ export class Signal implements INodeType {
                 description: 'Text snippet of the original message, shown as the quote preview (recommended so recipients see what is being replied to)',
                 displayOptions: {
                     show: {
-                        operation: ['answerMessage'],
-                    },
-                },
-            },
-            {
-                displayName: 'Source Attachment IDs',
-                name: 'sourceAttachmentIds',
-                type: 'string',
-                default: '',
-                placeholder: 'attachment_id_1.jpg,attachment_id_2.png',
-                description: 'Comma-separated attachment IDs from the original message (e.g. from the Signal Trigger\'s "attachments" field) to fetch and re-send along with the forward',
-                displayOptions: {
-                    show: {
-                        operation: ['forwardMessage'],
+                        operation: ['replyMessage'],
                     },
                 },
             },
@@ -346,7 +373,7 @@ export class Signal implements INodeType {
                 required: true,
                 displayOptions: {
                     show: {
-                        operation: ['downloadAttachment', 'removeAttachment'],
+                        operation: ATTACHMENT_ID_OPERATIONS,
                     },
                 },
             },
@@ -460,7 +487,7 @@ export class Signal implements INodeType {
                 description: 'Request timeout in seconds (set higher for Get Groups, e.g., 300)',
                 displayOptions: {
                     show: {
-                        operation: ['sendMessage', 'sendReaction', 'removeReaction', 'startTyping', 'stopTyping', 'markAsRead', 'answerMessage', 'forwardMessage', 'getContacts', 'getGroups', 'createGroup', 'updateGroup', 'listAttachments', 'downloadAttachment', 'removeAttachment', 'createPoll', 'closePoll', 'votePoll', 'searchContacts'],
+                        operation: TIMEOUT_OPERATIONS,
                     },
                 },
                 typeOptions: {
@@ -500,20 +527,20 @@ export class Signal implements INodeType {
                 message: this.getNodeParameter('message', i, '') as string,
                 groupId: this.getNodeParameter('groupId', i, '') as string,
                 groupName: this.getNodeParameter('groupName', i, '') as string,
-                groupMembers: this.getNodeParameter('groupMembers', i, '') as string,
+                groupMembers: this.getNodeParameter('groupMembers', i, '') as string | string[],
                 emoji: this.getNodeParameter('emoji', i, '') as string,
                 targetAuthor: this.getNodeParameter('targetAuthor', i, '') as string,
-                targetSentTimestamp: this.getNodeParameter('targetSentTimestamp', i, 0) as number,
+                targetSentTimestamp: coerceToNumber(this.getNodeParameter('targetSentTimestamp', i, 0) as number | string) ?? 0,
                 quoteMessage: this.getNodeParameter('quoteMessage', i, '') as string,
-                sourceAttachmentIds: this.getNodeParameter('sourceAttachmentIds', i, '') as string,
+                sourceAttachmentIds: this.getNodeParameter('sourceAttachmentIds', i, '') as string | string[],
                 attachmentId: this.getNodeParameter('attachmentId', i, '') as string,
                 pollQuestion: this.getNodeParameter('pollQuestion', i, '') as string,
-                pollAnswers: this.getNodeParameter('pollAnswers', i, '') as string,
+                pollAnswers: this.getNodeParameter('pollAnswers', i, '') as string | string[],
                 pollAllowMultiple: this.getNodeParameter('pollAllowMultiple', i, false) as boolean,
                 pollTimestamp: this.getNodeParameter('pollTimestamp', i, '') as string,
                 pollAuthor: this.getNodeParameter('pollAuthor', i, '') as string,
-                pollSelectedAnswers: this.getNodeParameter('pollSelectedAnswers', i, '') as string,
-                searchNumbers: this.getNodeParameter('searchNumbers', i, '') as string,
+                pollSelectedAnswers: this.getNodeParameter('pollSelectedAnswers', i, '') as string | string[],
+                searchNumbers: this.getNodeParameter('searchNumbers', i, '') as string | string[],
                 inputBinaryFields,
                 timeout,
                 apiUrl,
@@ -523,17 +550,17 @@ export class Signal implements INodeType {
 
             try {
                 let result: INodeExecutionData;
-                if (['sendMessage', 'sendReaction', 'removeReaction', 'startTyping', 'stopTyping', 'markAsRead', 'answerMessage', 'forwardMessage'].includes(operation)) {
+                if (MESSAGE_OPERATIONS.includes(operation)) {
                     result = await executeMessagesOperation.call(this, operation, i, params);
-                } else if (['listAttachments', 'downloadAttachment', 'removeAttachment'].includes(operation)) {
+                } else if (ATTACHMENT_OPERATIONS.includes(operation)) {
                     result = await executeAttachmentsOperation.call(this, operation, i, params);
-                } else if (['getGroups', 'createGroup', 'updateGroup'].includes(operation)) {
+                } else if (GROUP_OPERATIONS.includes(operation)) {
                     result = await executeGroupsOperation.call(this, operation, i, params);
-                } else if (operation === 'getContacts') {
+                } else if (CONTACT_OPERATIONS.includes(operation)) {
                     result = await executeContactsOperation.call(this, operation, i, params);
-                } else if (['createPoll', 'closePoll', 'votePoll'].includes(operation)) {
+                } else if (POLL_OPERATIONS.includes(operation)) {
                     result = await executePollsOperation.call(this, operation, i, params);
-                } else if (operation === 'searchContacts') {
+                } else if (SEARCH_OPERATIONS.includes(operation)) {
                     result = await executeSearchOperation.call(this, operation, i, params);
                 } else {
                     throw new NodeApiError(this.getNode(), { message: 'Unknown operation' });

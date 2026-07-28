@@ -1,19 +1,15 @@
 import { IExecuteFunctions, INodeExecutionData, NodeApiError } from 'n8n-workflow';
-import { AxiosError, AxiosRequestConfig } from 'axios';
 import axios from 'axios';
-
-interface SignalApiErrorResponse {
-    error?: string;
-}
+import { createAxiosConfig, handleSignalApiError, parseDelimitedList, retryRequest } from './shared';
 
 interface OperationParams {
     recipient?: string;
     pollQuestion?: string;
-    pollAnswers?: string;
+    pollAnswers?: string | string[];
     pollAllowMultiple?: boolean;
     pollTimestamp?: string;
     pollAuthor?: string;
-    pollSelectedAnswers?: string;
+    pollSelectedAnswers?: string | string[];
     timeout: number;
     apiUrl: string;
     apiToken: string;
@@ -28,21 +24,7 @@ export async function executePollsOperation(
 ): Promise<INodeExecutionData> {
     const { recipient, pollQuestion, pollAnswers, pollAllowMultiple, pollTimestamp, pollAuthor, pollSelectedAnswers, timeout, apiUrl, apiToken, phoneNumber } = params;
 
-    const axiosConfig: AxiosRequestConfig = {
-        headers: apiToken ? { Authorization: `Bearer ${apiToken}` } : {},
-        timeout,
-    };
-
-    const retryRequest = async (request: () => Promise<any>, retries = 2, delay = 5000): Promise<any> => {
-        for (let attempt = 1; attempt <= retries; attempt++) {
-            try {
-                return await request();
-            } catch (error) {
-                if (attempt === retries) throw error;
-                await new Promise(resolve => setTimeout(resolve, delay));
-            }
-        }
-    };
+    const axiosConfig = createAxiosConfig(apiToken, timeout);
 
     try {
         if (operation === 'createPoll') {
@@ -52,7 +34,7 @@ export async function executePollsOperation(
             if (!pollQuestion) {
                 throw new NodeApiError(this.getNode(), { message: 'Question is required for creating a poll' }, { itemIndex });
             }
-            const answers = (pollAnswers || '').split('\n').map(a => a.trim()).filter(a => a !== '');
+            const answers = parseDelimitedList(pollAnswers, '\n');
             if (answers.length < 2) {
                 throw new NodeApiError(this.getNode(), { message: 'At least 2 answers are required for creating a poll' }, { itemIndex });
             }
@@ -99,7 +81,7 @@ export async function executePollsOperation(
             if (!pollAuthor) {
                 throw new NodeApiError(this.getNode(), { message: 'Poll Author is required for voting on a poll' }, { itemIndex });
             }
-            const selectedAnswers = (pollSelectedAnswers || '').split(',').map(a => parseInt(a.trim(), 10)).filter(a => !isNaN(a));
+            const selectedAnswers = parseDelimitedList(pollSelectedAnswers).map(a => parseInt(a, 10)).filter(a => !isNaN(a));
             if (selectedAnswers.length === 0) {
                 throw new NodeApiError(this.getNode(), { message: 'At least one answer index is required for voting on a poll' }, { itemIndex });
             }
@@ -119,11 +101,6 @@ export async function executePollsOperation(
         }
         throw new NodeApiError(this.getNode(), { message: 'Unknown operation' });
     } catch (error) {
-        const axiosError = error as AxiosError<SignalApiErrorResponse>;
-        throw new NodeApiError(this.getNode(), {
-            message: axiosError.message,
-            description: (axiosError.response?.data?.error || axiosError.message) as string,
-            httpCode: axiosError.response?.status?.toString() || 'unknown',
-        }, { itemIndex });
+        handleSignalApiError(this, error, itemIndex);
     }
 }

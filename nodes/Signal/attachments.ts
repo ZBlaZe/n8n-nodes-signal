@@ -1,10 +1,7 @@
 import { IExecuteFunctions, INodeExecutionData, NodeApiError } from 'n8n-workflow';
-import { AxiosError, AxiosRequestConfig } from 'axios';
+import { AxiosRequestConfig } from 'axios';
 import axios from 'axios';
-
-interface SignalApiErrorResponse {
-    error?: string;
-}
+import { createAxiosConfig, handleSignalApiError, retryRequest } from './shared';
 
 interface OperationParams {
     attachmentId?: string;
@@ -23,20 +20,8 @@ export async function executeAttachmentsOperation(
     const { attachmentId, timeout, apiUrl, apiToken, phoneNumber } = params;
 
     const axiosConfig: AxiosRequestConfig = {
-        headers: apiToken ? { Authorization: `Bearer ${apiToken}` } : {},
-        timeout,
+        ...createAxiosConfig(apiToken, timeout),
         responseType: operation === 'downloadAttachment' ? 'arraybuffer' : 'json',
-    };
-
-    const retryRequest = async (request: () => Promise<any>, retries = 2, delay = 5000): Promise<any> => {
-        for (let attempt = 1; attempt <= retries; attempt++) {
-            try {
-                return await request();
-            } catch (error) {
-                if (attempt === retries) throw error;
-                await new Promise(resolve => setTimeout(resolve, delay));
-            }
-        }
     };
 
     try {
@@ -107,7 +92,7 @@ export async function executeAttachmentsOperation(
                 };
                 
                 const extension = mimeToExt[contentType] || 'bin';
-                fileName = `${attachmentId}`;
+                fileName = `${attachmentId}.${extension}`;
             }
             
             const fileExtension = fileName.split('.').pop() || '';
@@ -197,11 +182,6 @@ export async function executeAttachmentsOperation(
         }
         throw new NodeApiError(this.getNode(), { message: 'Unknown operation' });
     } catch (error) {
-        const axiosError = error as AxiosError<SignalApiErrorResponse>;
-        throw new NodeApiError(this.getNode(), {
-            message: axiosError.message,
-            description: (axiosError.response?.data?.error || axiosError.message) as string,
-            httpCode: axiosError.response?.status?.toString() || 'unknown',
-        }, { itemIndex });
+        handleSignalApiError(this, error, itemIndex);
     }
 }

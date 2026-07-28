@@ -1,10 +1,6 @@
 import { IExecuteFunctions, INodeExecutionData, NodeApiError } from 'n8n-workflow';
-import { AxiosError, AxiosRequestConfig } from 'axios';
 import axios from 'axios';
-
-interface SignalApiErrorResponse {
-    error?: string;
-}
+import { createAxiosConfig, handleSignalApiError, parseDelimitedList, retryRequest } from './shared';
 
 interface OperationParams {
     recipient?: string;
@@ -13,7 +9,7 @@ interface OperationParams {
     targetAuthor?: string;
     targetSentTimestamp?: number;
     quoteMessage?: string;
-    sourceAttachmentIds?: string;
+    sourceAttachmentIds?: string | string[];
     inputBinaryFields?: string[];
     timeout: number;
     apiUrl: string;
@@ -29,21 +25,7 @@ export async function executeMessagesOperation(
 ): Promise<INodeExecutionData> {
     const { recipient, message, emoji, targetAuthor, targetSentTimestamp, quoteMessage, sourceAttachmentIds, inputBinaryFields, timeout, apiUrl, apiToken, phoneNumber } = params;
 
-    const axiosConfig: AxiosRequestConfig = {
-        headers: apiToken ? { Authorization: `Bearer ${apiToken}` } : {},
-        timeout,
-    };
-
-    const retryRequest = async (request: () => Promise<any>, retries = 2, delay = 5000): Promise<any> => {
-        for (let attempt = 1; attempt <= retries; attempt++) {
-            try {
-                return await request();
-            } catch (error) {
-                if (attempt === retries) throw error;
-                await new Promise(resolve => setTimeout(resolve, delay));
-            }
-        }
-    };
+    const axiosConfig = createAxiosConfig(apiToken, timeout);
 
     // Converts n8n binary fields into signal-cli-rest-api's base64 data URI attachment format
     const buildBase64AttachmentsFromBinary = async (fields?: string[]): Promise<string[]> => {
@@ -93,7 +75,8 @@ export async function executeMessagesOperation(
     };
 
     // Downloads an already-stored attachment (e.g. from a Signal Trigger message) and
-    // re-encodes it as a base64 data URI, so it can be forwarded without a separate download step
+    // re-encodes it as a base64 data URI, so it can be re-sent (e.g. to forward a message)
+    // without a separate download step
     const fetchStoredAttachmentAsBase64 = async (attachmentId: string): Promise<string | null> => {
         try {
             const response = await retryRequest(() =>
@@ -137,13 +120,12 @@ export async function executeMessagesOperation(
                 }, { itemIndex });
             }
 
+            const base64Attachments = await buildBase64AttachmentsFromBinary(inputBinaryFields);
             const body: { message?: string; number: string; recipients: string[]; base64_attachments?: string[] } = {
                 message,
                 number: phoneNumber,
                 recipients: [recipient],
             };
-
-            const base64Attachments = await buildBase64AttachmentsFromBinary(inputBinaryFields);
             if (base64Attachments.length > 0) {
                 body.base64_attachments = base64Attachments;
             } else {
@@ -158,15 +140,15 @@ export async function executeMessagesOperation(
             );
             this.logger.debug(`Signal: Response: ${JSON.stringify(response.data, null, 2)}`);
             return { json: response.data || { status: 'Message sent' }, pairedItem: { item: itemIndex } };
-        } else if (operation === 'answerMessage') {
+        } else if (operation === 'replyMessage') {
             if (!recipient) {
                 throw new NodeApiError(this.getNode(), {
-                    message: 'Recipient is required for answering a message',
+                    message: 'Recipient is required for replying to a message',
                 }, { itemIndex });
             }
             if (!targetAuthor || !targetSentTimestamp) {
                 throw new NodeApiError(this.getNode(), {
-                    message: 'Target Author and Target Message Timestamp are required for answering a message',
+                    message: 'Target Author and Target Message Timestamp are required for replying to a message',
                 }, { itemIndex });
             }
 
@@ -208,18 +190,15 @@ export async function executeMessagesOperation(
                 }, { itemIndex });
             }
 
-            const sourceIds = (sourceAttachmentIds || '')
-                .split(',')
-                .map(id => id.trim())
-                .filter(id => id !== '');
+            const sourceIds = parseDelimitedList(sourceAttachmentIds);
 
-            if (!message && (!inputBinaryFields || inputBinaryFields.length === 0) && sourceIds.length === 0) {
+            if (!message && sourceIds.length === 0) {
                 throw new NodeApiError(this.getNode(), {
-                    message: 'Provide a message, binary attachment, or Source Attachment ID to forward',
+                    message: 'Provide a message or Source Attachment ID to forward',
                 }, { itemIndex });
             }
 
-            const base64Attachments = await buildBase64AttachmentsFromBinary(inputBinaryFields);
+            const base64Attachments: string[] = [];
 
             for (const sourceId of sourceIds) {
                 const attachment = await fetchStoredAttachmentAsBase64(sourceId);
@@ -355,11 +334,6 @@ export async function executeMessagesOperation(
         }
         throw new NodeApiError(this.getNode(), { message: 'Unknown operation' });
     } catch (error) {
-        const axiosError = error as AxiosError<SignalApiErrorResponse>;
-        throw new NodeApiError(this.getNode(), {
-            message: axiosError.message,
-            description: (axiosError.response?.data?.error || axiosError.message) as string,
-            httpCode: axiosError.response?.status?.toString() || 'unknown',
-        }, { itemIndex });
+        handleSignalApiError(this, error, itemIndex);
     }
 }
