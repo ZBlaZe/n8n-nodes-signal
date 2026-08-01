@@ -60,3 +60,24 @@ export function coerceToNumber(value: number | string | undefined | null): numbe
     const num = typeof value === 'number' ? value : Number(value);
     return Number.isNaN(num) ? undefined : num;
 }
+
+// signal-cli-rest-api addresses groups as "group." + base64(rawGroupId) — but rawGroupId here
+// means the base64 TEXT signal-cli itself reports for a group (e.g. a Signal Trigger's
+// `groupInternalId` / `envelope.dataMessage.groupInfo.groupId`), base64-encoded AGAIN as a second
+// layer. See signal-cli-rest-api's client.go `getRecipientType`: it strips the "group." prefix and
+// base64-decodes *twice* before checking the result is the fixed 32-byte Signal group id size.
+// Binding Recipient straight to `groupInternalId` sends only the first layer, which the server
+// can't resolve ("Group not found"). This detects that bare shape (a string that isn't already
+// prefixed, and whose single base64 decode round-trips to exactly 32 bytes — the same check the
+// server itself uses) and wraps it into the addressable form automatically. Phone numbers, UUIDs,
+// and usernames don't round-trip as clean 32-byte base64, so they pass through untouched.
+export function normalizeGroupRecipient(recipient: string): string {
+    if (!recipient || recipient.startsWith('group.')) {
+        return recipient;
+    }
+    const decoded = Buffer.from(recipient, 'base64');
+    if (decoded.length === 32 && decoded.toString('base64') === recipient) {
+        return `group.${Buffer.from(recipient, 'utf-8').toString('base64')}`;
+    }
+    return recipient;
+}

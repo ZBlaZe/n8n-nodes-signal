@@ -11,7 +11,7 @@ import { executeContactsOperation } from './contacts';
 import { executeAttachmentsOperation } from './attachments';
 import { executePollsOperation } from './polls';
 import { executeSearchOperation } from './search';
-import { coerceToNumber } from './shared';
+import { coerceToNumber, normalizeGroupRecipient } from './shared';
 
 // Single source of truth for which operations belong to each resource group.
 // Referenced both by the field `displayOptions` below and by the routing in `execute()`,
@@ -523,7 +523,7 @@ export class Signal implements INodeType {
             this.logger.debug(`Signal: Input binary fields for item ${i}: ${JSON.stringify(inputBinaryFields)}`);
 
             const params = {
-                recipient: this.getNodeParameter('recipient', i, '') as string,
+                recipient: normalizeGroupRecipient(this.getNodeParameter('recipient', i, '') as string),
                 message: this.getNodeParameter('message', i, '') as string,
                 groupId: this.getNodeParameter('groupId', i, '') as string,
                 groupName: this.getNodeParameter('groupName', i, '') as string,
