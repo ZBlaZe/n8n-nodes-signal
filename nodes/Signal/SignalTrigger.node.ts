@@ -4,7 +4,6 @@ import {
     INodeTypeDescription,
     ITriggerFunctions,
     ITriggerResponse,
-    NodeApiError,
 } from 'n8n-workflow';
 import { WebSocket } from 'ws';
 import { createAxiosConfig, retryRequest } from './shared';
@@ -16,6 +15,52 @@ import axios from 'axios';
 // MAX_INLINE_BODY_SIZE_BYTES). It's not a file the sender attached, so this node downloads its
 // content to restore the untruncated text and drops it from the emitted `attachments` list.
 const LONG_TEXT_ATTACHMENT_CONTENT_TYPE = 'text/x-signal-plain';
+
+export interface SignalReaction {
+    emoji?: string;
+    targetAuthor?: string;
+    targetAuthorNumber?: string;
+    targetAuthorUuid?: string;
+    targetSentTimestamp?: number;
+    isRemove?: boolean;
+}
+
+export interface SignalPollVote {
+    author: string;
+    authorNumber: string;
+    authorUuid: string;
+    targetSentTimestamp: number;
+    optionIndexes: number[];
+    voteCount: number;
+}
+
+export interface ProcessedSignalMessage {
+    messageText: string;
+    attachments: Array<{ contentType?: string; id?: string }>;
+    reactions: SignalReaction | null;
+    pollVote: SignalPollVote | null;
+}
+
+export function hasSignalContent(message: ProcessedSignalMessage): boolean {
+    return Boolean(
+        message.messageText ||
+        message.attachments.length > 0 ||
+        message.reactions !== null ||
+        message.pollVote !== null,
+    );
+}
+
+export function shouldIgnoreSignalMessage(
+    message: ProcessedSignalMessage,
+    options: { ignoreMessages: boolean; ignoreAttachments: boolean; ignoreReactions: boolean; ignorePollVotes: boolean },
+): boolean {
+    return Boolean(
+        (options.ignoreMessages && message.messageText) ||
+        (options.ignoreAttachments && message.attachments.length > 0) ||
+        (options.ignoreReactions && message.reactions !== null) ||
+        (options.ignorePollVotes && message.pollVote !== null),
+    );
+}
 
 export class SignalTrigger implements INodeType {
     description: INodeTypeDescription = {
@@ -159,10 +204,10 @@ export class SignalTrigger implements INodeType {
                             }
                         }
 
-                        const processedMessage = {
+                        const processedMessage: ProcessedSignalMessage & Record<string, unknown> = {
                             messageText,
                             attachments,
-                            reactions: dataMessage?.reaction || [],
+                            reactions: dataMessage?.reaction ?? null,
                             pollVote: pollVote ? {
                                 author: pollVote.author || '',
                                 authorNumber: pollVote.authorNumber || '',
@@ -188,11 +233,7 @@ export class SignalTrigger implements INodeType {
                         this.logger.debug(`SignalTrigger: Processed message content: ${JSON.stringify(processedMessage, null, 2)}`);
 
                         // Filter: skip if no meaningful content
-                        const hasContent =
-                            processedMessage.messageText ||
-                            processedMessage.attachments.length > 0 ||
-                            processedMessage.reactions.length > 0 ||
-                            processedMessage.pollVote !== null;
+                        const hasContent = hasSignalContent(processedMessage);
 
                         if (!hasContent) {
                             this.logger.debug(`SignalTrigger: Skipping empty message with timestamp ${timestamp}`);
@@ -200,12 +241,12 @@ export class SignalTrigger implements INodeType {
                         }
 
                         // Filter: skip based on ignore settings
-                        if (
-                            (ignoreMessages && processedMessage.messageText) ||
-                            (ignoreAttachments && processedMessage.attachments.length > 0) ||
-                            (ignoreReactions && processedMessage.reactions.length > 0) ||
-                            (ignorePollVotes && processedMessage.pollVote !== null)
-                        ) {
+                        if (shouldIgnoreSignalMessage(processedMessage, {
+                            ignoreMessages,
+                            ignoreAttachments,
+                            ignoreReactions,
+                            ignorePollVotes,
+                        })) {
                             this.logger.debug(`SignalTrigger: Ignoring message with timestamp ${timestamp} due to filter`);
                             return;
                         }
