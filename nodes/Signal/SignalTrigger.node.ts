@@ -99,7 +99,23 @@ export class SignalTrigger implements INodeType {
         let reconnectTimeout: NodeJS.Timeout | null = null;
         let isClosed = false;
 
+        // ONE pending reconnect at a time. `ws` emits `error` AND `close` for a single failed connect;
+        // scheduling from both without clearing the first handle doubles the sockets on every failure
+        // (1 -> 2 -> 4 -> ...), and closeFunction only ever closes the newest one.
+        const scheduleReconnect = () => {
+            if (isClosed) return;
+            if (reconnectTimeout) clearTimeout(reconnectTimeout);
+            reconnectTimeout = setTimeout(() => {
+                reconnectTimeout = null;
+                connectWebSocket();
+            }, reconnectDelay);
+        };
+
         const connectWebSocket = () => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                this.logger.debug('SignalTrigger: WebSocket already open, skipping reconnect');
+                return;
+            }
             if (isClosed) {
                 this.logger.debug('SignalTrigger: Trigger is closed, skipping reconnect');
                 return;
@@ -223,16 +239,12 @@ export class SignalTrigger implements INodeType {
 
             ws.on('error', (error: Error) => {
                 this.logger.error('SignalTrigger: WebSocket error', { error });
-                if (!isClosed) {
-                    reconnectTimeout = setTimeout(connectWebSocket, reconnectDelay);
-                }
+                scheduleReconnect();
             });
 
             ws.on('close', (code, reason) => {
                 this.logger.debug(`SignalTrigger: WebSocket closed with code ${code}, reason: ${reason.toString()}`);
-                if (!isClosed) {
-                    reconnectTimeout = setTimeout(connectWebSocket, reconnectDelay);
-                }
+                scheduleReconnect();
             });
         };
 
