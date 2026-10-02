@@ -17,6 +17,21 @@ import axios from 'axios';
 // content to restore the untruncated text and drops it from the emitted `attachments` list.
 const LONG_TEXT_ATTACHMENT_CONTENT_TYPE = 'text/x-signal-plain';
 
+function parseFilterList(raw: string): string[] {
+    return raw
+        .split(/[\n,]/)
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0);
+}
+
+function matchesFilter(mode: string, list: string[], values: string[]): boolean {
+    if (mode === 'none') {
+        return true;
+    }
+    const isListed = values.some((value) => value && list.includes(value));
+    return mode === 'whitelist' ? isListed : !isListed;
+}
+
 export class SignalTrigger implements INodeType {
     description: INodeTypeDescription = {
         displayName: 'Signal Trigger',
@@ -76,6 +91,72 @@ export class SignalTrigger implements INodeType {
                 default: false,
                 description: 'Whether to ignore incoming poll votes',
             },
+            {
+                displayName: 'Filters',
+                name: 'filters',
+                type: 'collection',
+                placeholder: 'Add Filter',
+                default: {},
+                description: 'Restrict which groups or contacts can trigger this node, to reduce load on n8n',
+                options: [
+                    {
+                        displayName: 'Group Filter Mode',
+                        name: 'groupFilterMode',
+                        type: 'options',
+                        options: [
+                            { name: 'None', value: 'none' },
+                            { name: 'Whitelist', value: 'whitelist' },
+                            { name: 'Blacklist', value: 'blacklist' },
+                        ],
+                        default: 'none',
+                        description: 'Whether to restrict which groups trigger this node',
+                    },
+                    {
+                        displayName: 'Groups',
+                        name: 'groupFilterList',
+                        type: 'string',
+                        typeOptions: {
+                            rows: 4,
+                        },
+                        default: '',
+                        placeholder: 'group-internal-id-1\ngroup-internal-id-2',
+                        description: 'Group internal IDs to whitelist/blacklist, one per line (or comma-separated)',
+                        displayOptions: {
+                            hide: {
+                                groupFilterMode: ['none'],
+                            },
+                        },
+                    },
+                    {
+                        displayName: 'Contact Filter Mode',
+                        name: 'contactFilterMode',
+                        type: 'options',
+                        options: [
+                            { name: 'None', value: 'none' },
+                            { name: 'Whitelist', value: 'whitelist' },
+                            { name: 'Blacklist', value: 'blacklist' },
+                        ],
+                        default: 'none',
+                        description: 'Whether to restrict which senders trigger this node',
+                    },
+                    {
+                        displayName: 'Contacts',
+                        name: 'contactFilterList',
+                        type: 'string',
+                        typeOptions: {
+                            rows: 4,
+                        },
+                        default: '',
+                        placeholder: '+1234567890\nsender-uuid',
+                        description: 'Sender phone numbers or UUIDs to whitelist/blacklist, one per line (or comma-separated)',
+                        displayOptions: {
+                            hide: {
+                                contactFilterMode: ['none'],
+                            },
+                        },
+                    },
+                ],
+            },
         ],
     };
 
@@ -89,6 +170,16 @@ export class SignalTrigger implements INodeType {
         const ignoreAttachments = this.getNodeParameter('ignoreAttachments', 0) as boolean;
         const ignoreReactions = this.getNodeParameter('ignoreReactions', 0) as boolean;
         const ignorePollVotes = this.getNodeParameter('ignorePollVotes', 0) as boolean;
+        const filters = this.getNodeParameter('filters', 0, {}) as {
+            groupFilterMode?: string;
+            groupFilterList?: string;
+            contactFilterMode?: string;
+            contactFilterList?: string;
+        };
+        const groupFilterMode = filters.groupFilterMode || 'none';
+        const groupFilterList = parseFilterList(filters.groupFilterList || '');
+        const contactFilterMode = filters.contactFilterMode || 'none';
+        const contactFilterList = parseFilterList(filters.contactFilterList || '');
 
         const wsUrl = `${apiUrl.replace('http', 'ws')}/v1/receive/${phoneNumber}`;
         this.logger.debug(`SignalTrigger: Attempting to connect to WS URL: ${wsUrl}`);
@@ -132,6 +223,20 @@ export class SignalTrigger implements INodeType {
                         }
 
                         const dataMessage = message.envelope?.dataMessage;
+
+                        const groupInternalId: string = dataMessage?.groupInfo?.groupId || '';
+                        if (groupInternalId && !matchesFilter(groupFilterMode, groupFilterList, [groupInternalId])) {
+                            this.logger.debug(`SignalTrigger: Skipping message with timestamp ${timestamp} due to group filter`);
+                            return;
+                        }
+
+                        const sourceNumber: string = message.envelope?.sourceNumber || '';
+                        const sourceUuid: string = message.envelope?.sourceUuid || '';
+                        if (!matchesFilter(contactFilterMode, contactFilterList, [sourceNumber, sourceUuid])) {
+                            this.logger.debug(`SignalTrigger: Skipping message with timestamp ${timestamp} due to contact filter`);
+                            return;
+                        }
+
                         const pollVote = dataMessage?.pollVote || null;
                         const messageType = message.envelope?.syncMessage ? 'outgoing' : 'incoming';
 
